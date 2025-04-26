@@ -1,0 +1,32 @@
+# Ignore build output directory
+.next/
+
+# Ignore node modules
+node_modules/
+
+# Ignore the following specific files with issues
+src/app/admin/initialize-special-users/page.tsx
+src/app/admin/initialize-special-users.tsx
+src/app/bank/approvals/page.tsx
+src/app/bank/dashboard/page.tsx
+src/app/dashboard/page.tsx
+src/app/forgot-password/page.tsx
+src/app/login/page.tsx
+src/app/register/employee/page.tsx
+src/app/register/employer/page.tsx
+src/app/signup/page.tsx
+src/components/ClientLayout.tsx
+src/components/dashboard/AdminDashboard.tsx
+src/components/dashboard/BankDashboard.tsx
+src/components/dashboard/EmployeeDashboard.tsx
+src/components/dashboard/EmployerDashboard.tsx
+src/components/dashboard/dashboardTypes.ts
+src/components/dashboard/dashboardUtils.ts
+src/contexts/AuthContext.tsx
+src/lib/firebase.ts
+
+# Ignore public assets
+public/
+
+# Ignore type declaration files
+*.d.ts 

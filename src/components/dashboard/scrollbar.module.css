@@ -1,0 +1,57 @@
+/* Custom scrollbar styles */
+.scrollable {
+  /* Basic scrollbar properties */
+  scrollbar-width: thin;
+  scrollbar-color: #86efac #f0fdf4;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 600px; /* Default max height for scrollable containers */
+  border-radius: 0.5rem;
+  border: 1px solid #dcfce7; /* colors.green[100] */
+}
+
+.scrollable::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollable::-webkit-scrollbar-track {
+  background-color: #f0fdf4; /* colors.green[50] */
+  border-radius: 4px;
+}
+
+.scrollable::-webkit-scrollbar-thumb {
+  background-color: #86efac; /* colors.green[300] */
+  border-radius: 4px;
+}
+
+.scrollable::-webkit-scrollbar-thumb:hover {
+  background-color: #4ade80; /* colors.green[400] */
+}
+
+/* Enhanced scrollbar styling for tables */
+.scrollbarCustom {
+  scrollbar-width: thin;
+  scrollbar-color: #86efac #f0fdf4;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.scrollbarCustom::-webkit-scrollbar {
+  width: 10px; /* Slightly wider for better visibility */
+}
+
+.scrollbarCustom::-webkit-scrollbar-track {
+  background-color: #f0fdf4;
+  border-radius: 0 4px 4px 0;
+  margin: 4px 0;
+}
+
+.scrollbarCustom::-webkit-scrollbar-thumb {
+  background-color: #86efac;
+  border-radius: 10px;
+  border: 2px solid #f0fdf4;
+}
+
+.scrollbarCustom::-webkit-scrollbar-thumb:hover {
+  background-color: #4ade80;
+} 
