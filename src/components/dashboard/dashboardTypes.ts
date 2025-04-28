@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp, FieldValue } from 'firebase/firestore';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -46,6 +46,7 @@ export interface TripData {
   transportMode: 'walking' | 'cycling' | 'publicTransport' | 'rideShare' | 'ownVehicle' | 'unknown';
   carbonCredits: number;
   isWorkFromHome: boolean;
+  rejected?: boolean;
 }
 
 export interface Organization {
@@ -69,6 +70,8 @@ export interface Employee {
   calculatedCredits?: number;
   role?: UserRole;
   approved?: boolean;
+  status?: 'active' | 'inactive';
+  active?: boolean;
 }
 
 export interface CreditTransaction {
@@ -78,9 +81,11 @@ export interface CreditTransaction {
   buyerOrgId: string;
   buyerOrgName: string;
   creditAmount: number;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'completed' | 'pending_purchase';
   price: number;
-  createdAt: string;
+  createdAt: Date | string | FieldValue;
+  updatedAt?: Date | string | FieldValue;
+  completedAt?: Date | null;
 }
 
 export type UserRole = 'employee' | 'employer' | 'bank' | 'admin' | 'user' | 'system_admin';

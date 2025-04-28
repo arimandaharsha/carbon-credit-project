@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import Toast from '@/components/ui/Toast';
+import Logo from '@/components/ui/Logo';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -64,20 +65,18 @@ const styles = {
     textAlign: 'center' as const,
     marginBottom: '1.5rem'
   },
-  logoCircle: {
-    width: '4rem',
-    height: '4rem',
-    backgroundColor: colors.green[100],
-    borderRadius: '50%',
+  logoContainer: {
+    width: '10rem',
+    height: '5rem',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: '1rem'
   },
-  logoIcon: {
-    width: '2rem',
-    height: '2rem',
-    color: colors.green[600]
+  logo: {
+    width: '100%',
+    height: 'auto',
+    objectFit: 'contain' as const
   },
   title: {
     fontSize: '1.5rem',
@@ -286,23 +285,8 @@ export default function LoginPage() {
     <div style={styles.container}>
       <div style={styles.card}>
         <div style={styles.headerContainer}>
-          <div style={styles.logoCircle}>
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              style={styles.logoIcon} 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={1.5} 
-                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" 
-              />
-            </svg>
-          </div>
-          <h1 style={styles.title}>Carbon Credit Project</h1>
+          <Logo width="12rem" height="6rem" />
+          <h1 style={styles.title}>Sign In</h1>
           <p style={styles.subtitle}>Sign in to your account to continue</p>
         </div>
         

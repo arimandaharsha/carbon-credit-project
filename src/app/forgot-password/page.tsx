@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import Toast from '@/components/ui/Toast';
+import Logo from '@/components/ui/Logo';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -64,20 +65,18 @@ const styles = {
     textAlign: 'center' as const,
     marginBottom: '1.5rem'
   },
-  logoCircle: {
-    width: '4rem',
-    height: '4rem',
-    backgroundColor: colors.green[100],
-    borderRadius: '50%',
+  logoContainer: {
+    width: '10rem',
+    height: '5rem',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: '1rem'
   },
-  logoIcon: {
-    width: '2rem',
-    height: '2rem',
-    color: colors.green[600]
+  logo: {
+    width: '100%',
+    height: 'auto',
+    objectFit: 'contain' as const
   },
   title: {
     fontSize: '1.5rem',
@@ -257,26 +256,10 @@ export default function ForgotPasswordPage() {
     <div style={styles.container}>
       <div style={styles.card}>
         <div style={styles.headerContainer}>
-          <div style={styles.logoCircle}>
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              style={styles.logoIcon} 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={1.5} 
-                d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" 
-              />
-            </svg>
-          </div>
-          <h1 style={styles.title}>Reset Password</h1>
-          <p style={styles.subtitle}>Forgot your password?</p>
-          <p style={styles.description}>
-            Enter your email address below and we will send you instructions to reset your password.
+          <Logo width="12rem" height="6rem" />
+          <h1 style={styles.title}>Reset Your Password</h1>
+          <p style={styles.subtitle}>
+            Enter your email address and we'll send you instructions to reset your password
           </p>
         </div>
         

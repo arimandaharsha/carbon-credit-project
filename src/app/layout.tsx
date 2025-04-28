@@ -7,6 +7,10 @@ import React from 'react';
 export const metadata: Metadata = {
   title: "Carbon Credit Project",
   description: "A platform for carbon credit management",
+  icons: {
+    icon: '/Logo.png',
+    apple: '/Logo.png',
+  }
 };
 
 const bodyStyle = {
@@ -21,6 +25,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <link rel="icon" href="/Logo.png" />
+      </head>
       <body style={bodyStyle}>
         <AuthProvider>
           <ClientLayout>

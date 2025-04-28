@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
+  <defs>
+    <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#005B85" />
+      <stop offset="100%" stop-color="#16A34A" />
+    </linearGradient>
+  </defs>
+  <circle cx="120" cy="100" r="70" fill="#005B85"/>
+  <path d="M120,30 L160,80 L140,150 L100,150 L80,80 Z" fill="white"/>
+  <path d="M200,65 C240,55 280,55 320,65 C330,70 350,80 360,100 L220,150 L200,65 Z" fill="#16A34A"/>
+  <path d="M90,110 C130,130 150,110 190,110 C230,110 250,130 290,110" stroke="#00BCD4" stroke-width="15" fill="none"/>
+  <text x="200" y="70" font-family="Arial" font-size="42" font-weight="bold" text-anchor="middle" fill="white">TRAVEL</text>
+  <text x="210" y="130" font-family="Arial" font-size="60" font-weight="bold" text-anchor="middle" fill="white">GREEN</text>
+</svg> 

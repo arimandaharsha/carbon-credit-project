@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, updateDoc, deleteDoc, orderBy, limit } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
+import { collection, query, where, getDocs, doc, updateDoc, deleteDoc, orderBy, limit, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { styles, colors } from './dashboardStyles';
 import { 
@@ -22,26 +22,53 @@ import scrollbarStyles from './scrollbar.module.css';
 const AdminDashboard: React.FC = () => {
   // Define additional colors needed for badges
   const extendedColors = {
+    ...colors,
+    amber: {
+      50: '#fffbeb',
+      100: '#fef3c7',
+      200: '#fde68a',
+      300: '#fcd34d',
+      400: '#fbbf24',
+      500: '#f59e0b',
+      600: '#d97706',
+      700: '#b45309',
+      800: '#92400e',
+      900: '#78350f',
+    },
     blue: {
+      50: '#eff6ff',
       100: '#dbeafe',
-      700: '#1d4ed8'
+      200: '#bfdbfe',
+      300: '#93c5fd',
+      400: '#60a5fa',
+      500: '#3b82f6',
+      600: '#2563eb',
+      700: '#1d4ed8',
+      800: '#1e40af',
+      900: '#1e3a8a',
     },
     yellow: {
       100: '#fef9c3',
-      700: '#a16207'
+      200: '#fef08a',
+      300: '#fde047',
+      400: '#facc15',
+      500: '#eab308',
+      600: '#ca8a04',
+      700: '#a16207',
+      800: '#854d0e',
+      900: '#713f12',
     },
     orange: {
       100: '#ffedd5',
-      700: '#c2410c'
+      200: '#fed7aa',
+      300: '#fdba74',
+      400: '#fb923c',
+      500: '#f97316',
+      600: '#ea580c',
+      700: '#c2410c',
+      800: '#9a3412',
+      900: '#7c2d12',
     },
-    red: {
-      100: '#fee2e2',
-      700: '#b91c1c'
-    },
-    green: {
-      100: '#d1fae5',
-      700: '#15803d'
-    }
   };
 
   // Original state variables
@@ -63,6 +90,27 @@ const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [toast, setToast] = useState<ToastType>({ visible: false, message: '', type: 'info' });
   
+  // New state variables for enhanced functionality
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [itemToDelete, setItemToDelete] = useState<{ id: string; type: string; name: string } | null>(null);
+  const [stats, setStats] = useState<{
+    totalOrgs: number;
+    totalUsers: number;
+    totalEmployees: number;
+    totalTrips: number;
+    totalCredits: number;
+    pendingApprovals: number;
+  }>({
+    totalOrgs: 0,
+    totalUsers: 0,
+    totalEmployees: 0,
+    totalTrips: 0,
+    totalCredits: 0,
+    pendingApprovals: 0
+  });
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  
   const { userData } = useAuth();
 
   useEffect(() => {
@@ -83,6 +131,8 @@ const AdminDashboard: React.FC = () => {
         fetchTransactions(),
         fetchTrips()
       ]);
+      
+      // Each fetch function now calls calculateStats individually
       showToast('All data loaded successfully', 'success');
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -111,6 +161,7 @@ const AdminDashboard: React.FC = () => {
       });
       
       setPendingEmployers(employersList);
+      calculateStats(); // Update stats after data is fetched
     } catch (error) {
       console.error("Error fetching pending employers:", error);
       showToast('Failed to load pending employer data', 'error');
@@ -138,6 +189,7 @@ const AdminDashboard: React.FC = () => {
       });
       
       setPendingEmployees(employeesList);
+      calculateStats(); // Update stats after data is fetched
     } catch (error) {
       console.error("Error fetching pending employees:", error);
       showToast('Failed to load pending employee data', 'error');
@@ -170,6 +222,7 @@ const AdminDashboard: React.FC = () => {
       });
       
       setOrganizations(orgsList);
+      calculateStats(); // Update stats after data is fetched
     } catch (error) {
       console.error("Error fetching organizations:", error);
       showToast('Failed to load organizations data', 'error');
@@ -224,6 +277,7 @@ const AdminDashboard: React.FC = () => {
       setAllUsers(usersList);
       setEmployees(employeesList);
       setEmployers(employersList);
+      calculateStats(); // Update stats after data is fetched
     } catch (error) {
       console.error("Error fetching users:", error);
       showToast('Failed to load users data', 'error');
@@ -256,6 +310,7 @@ const AdminDashboard: React.FC = () => {
       });
       
       setTransactions(transactionsList);
+      calculateStats(); // Update stats after data is fetched
     } catch (error) {
       console.error("Error fetching transactions:", error);
       showToast('Failed to load transactions data', 'error');
@@ -295,6 +350,7 @@ const AdminDashboard: React.FC = () => {
       });
       
       setTrips(tripsList);
+      calculateStats(); // Update stats after data is fetched
     } catch (error) {
       console.error("Error fetching trips:", error);
       showToast('Failed to load trips data', 'error');
@@ -411,8 +467,8 @@ const AdminDashboard: React.FC = () => {
         onClick={() => setActiveTab(id)}
         style={{
           padding: '0.5rem 1rem',
-          backgroundColor: activeTab === id ? colors.green[100] : 'transparent',
-          color: activeTab === id ? colors.green[800] : colors.gray[700],
+          backgroundColor: activeTab === id ? extendedColors.green[100] : 'transparent',
+          color: activeTab === id ? extendedColors.green[800] : extendedColors.gray[700],
           fontWeight: activeTab === id ? 600 : 500,
           border: 'none',
           borderRadius: '0.375rem',
@@ -425,6 +481,262 @@ const AdminDashboard: React.FC = () => {
     );
   };
 
+  // Add this after fetchAllData
+  const calculateStats = () => {
+    const totalOrgs = organizations.length;
+    const totalUsers = allUsers.length;
+    const totalEmployees = employees.length;
+    const totalTrips = trips.length;
+    const totalCredits = organizations.reduce((sum, org) => sum + org.totalCredits, 0);
+    const pendingApprovals = pendingEmployers.length + pendingEmployees.length;
+
+    setStats({
+      totalOrgs,
+      totalUsers,
+      totalEmployees,
+      totalTrips,
+      totalCredits,
+      pendingApprovals
+    });
+  };
+
+  // Add this new function for deleting data
+  const handleDeleteItem = async () => {
+    if (!itemToDelete) return;
+    
+    try {
+      const { id, type } = itemToDelete;
+      
+      switch (type) {
+        case 'organization':
+          await deleteDoc(doc(db, 'organizations', id));
+          setOrganizations(organizations.filter(org => org.id !== id));
+          break;
+        case 'user':
+          await deleteDoc(doc(db, 'users', id));
+          setAllUsers(allUsers.filter(user => user.uid !== id));
+          setEmployees(employees.filter(emp => emp.id !== id));
+          setPendingEmployers(pendingEmployers.filter(emp => emp.id !== id));
+          break;
+        case 'transaction':
+          await deleteDoc(doc(db, 'credit_transactions', id));
+          setTransactions(transactions.filter(t => t.id !== id));
+          break;
+        case 'trip':
+          await deleteDoc(doc(db, 'trips', id));
+          setTrips(trips.filter(trip => trip.id !== id));
+          break;
+        case 'pendingEmployer':
+          await deleteDoc(doc(db, 'pending_employers', id));
+          setPendingEmployers(pendingEmployers.filter(emp => emp.id !== id));
+          break;
+        case 'pendingEmployee':
+          await deleteDoc(doc(db, 'pending_employees', id));
+          setPendingEmployees(pendingEmployees.filter(emp => emp.id !== id));
+          break;
+        default:
+          break;
+      }
+      
+      // Recalculate stats after deletion
+      calculateStats();
+      
+      showToast(`${itemToDelete.type} deleted successfully`, 'success');
+    } catch (error) {
+      console.error("Error deleting item:", error);
+      showToast(`Failed to delete ${itemToDelete.type}`, 'error');
+    } finally {
+      setShowDeleteModal(false);
+      setItemToDelete(null);
+    }
+  };
+
+  // Add this new function for exporting data
+  const exportData = (dataType: string) => {
+    setIsExporting(true);
+    
+    try {
+      let dataToExport: any[] = [];
+      let fileName = '';
+      
+      switch (dataType) {
+        case 'organizations':
+          dataToExport = organizations;
+          fileName = 'organizations.json';
+          break;
+        case 'users':
+          dataToExport = allUsers;
+          fileName = 'users.json';
+          break;
+        case 'employees':
+          dataToExport = employees;
+          fileName = 'employees.json';
+          break;
+        case 'employers':
+          dataToExport = employers;
+          fileName = 'employers.json';
+          break;
+        case 'transactions':
+          dataToExport = transactions;
+          fileName = 'transactions.json';
+          break;
+        case 'trips':
+          dataToExport = trips;
+          fileName = 'trips.json';
+          break;
+        default:
+          break;
+      }
+      
+      // Create download link
+      const dataStr = JSON.stringify(dataToExport, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      
+      URL.revokeObjectURL(url);
+      showToast(`${dataType} data exported successfully`, 'success');
+    } catch (error) {
+      console.error("Error exporting data:", error);
+      showToast(`Failed to export ${dataType} data`, 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Add code for the DeleteConfirmationModal component
+  const DeleteConfirmationModal = () => {
+    if (!showDeleteModal || !itemToDelete) return null;
+    
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000
+      }}>
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '0.5rem',
+          padding: '1.5rem',
+          width: '90%',
+          maxWidth: '450px',
+          boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)'
+        }}>
+          <h3 style={{ 
+            fontSize: '1.25rem', 
+            fontWeight: 600, 
+            color: extendedColors.gray[900],
+            marginTop: 0,
+            marginBottom: '1rem'
+          }}>
+            Confirm Deletion
+          </h3>
+          
+          <p style={{ color: extendedColors.gray[700], marginBottom: '1.5rem' }}>
+            Are you sure you want to delete this {itemToDelete.type}?
+            <br/>
+            <strong>{itemToDelete.name}</strong>
+            <br/><br/>
+            This action cannot be undone.
+          </p>
+          
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'flex-end', 
+            gap: '0.75rem' 
+          }}>
+            <button 
+              onClick={() => setShowDeleteModal(false)}
+              style={{
+                padding: '0.5rem 1rem',
+                backgroundColor: extendedColors.gray[100],
+                color: extendedColors.gray[700],
+                border: 'none',
+                borderRadius: '0.375rem',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+            
+            <button 
+              onClick={handleDeleteItem}
+              style={{
+                padding: '0.5rem 1rem',
+                backgroundColor: extendedColors.red[600],
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.375rem',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                cursor: 'pointer'
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Update the getFilteredData function to handle all data types properly
+  const getFilteredData = (data: any[], keys: string[]) => {
+    if (!searchTerm.trim()) return data;
+    
+    const term = searchTerm.toLowerCase();
+    return data.filter(item => 
+      keys.some(key => {
+        // Handle nested properties and different data types
+        const value = item[key];
+        
+        // Handle undefined values
+        if (value === undefined || value === null) return false;
+        
+        // Handle numbers
+        if (typeof value === 'number') {
+          return value.toString().includes(term);
+        }
+        
+        // Handle booleans
+        if (typeof value === 'boolean') {
+          return value.toString().toLowerCase().includes(term);
+        }
+        
+        // Handle dates
+        if (value instanceof Date) {
+          return value.toLocaleDateString().toLowerCase().includes(term) ||
+                 value.toLocaleString().toLowerCase().includes(term);
+        }
+        
+        // Handle strings
+        if (typeof value === 'string') {
+          return value.toLowerCase().includes(term);
+        }
+        
+        // Handle objects (like nested properties)
+        if (typeof value === 'object') {
+          return JSON.stringify(value).toLowerCase().includes(term);
+        }
+        
+        return false;
+      })
+    );
+  };
+
   return (
     <>
       <Header userData={userData} />
@@ -433,15 +745,15 @@ const AdminDashboard: React.FC = () => {
           {loading ? (
             <div style={styles.loader}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-spin">
-                <circle cx="12" cy="12" r="10" stroke={colors.gray[300]} strokeWidth="4" />
-                <path d="M12 2C6.47715 2 2 6.47715 2 12" stroke={colors.green[500]} strokeWidth="4" />
+                <circle cx="12" cy="12" r="10" stroke={extendedColors.gray[300]} strokeWidth="4" />
+                <path d="M12 2C6.47715 2 2 6.47715 2 12" stroke={extendedColors.green[500]} strokeWidth="4" />
               </svg>
               <p style={styles.loaderText}>Loading dashboard data...</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: colors.gray[900], margin: 0 }}>
+                <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: extendedColors.gray[900], margin: 0 }}>
                   System Admin Dashboard
                 </h1>
                 
@@ -452,9 +764,9 @@ const AdminDashboard: React.FC = () => {
                     alignItems: 'center',
                     gap: '0.5rem',
                     padding: '0.5rem 1rem',
-                    backgroundColor: colors.green[50],
-                    color: colors.green[700],
-                    border: `1px solid ${colors.green[200]}`,
+                    backgroundColor: extendedColors.green[50],
+                    color: extendedColors.green[700],
+                    border: `1px solid ${extendedColors.green[200]}`,
                     borderRadius: '0.375rem',
                     fontSize: '0.875rem',
                     fontWeight: 500,
@@ -471,11 +783,75 @@ const AdminDashboard: React.FC = () => {
                 </button>
               </div>
               
+              {/* Stats Dashboard */}
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                gap: '1rem',
+                marginBottom: '1rem'
+              }}>
+                <div style={{
+                  backgroundColor: extendedColors.white,
+                  borderRadius: '0.5rem',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                  padding: '1rem',
+                  border: `1px solid ${extendedColors.gray[100]}`
+                }}>
+                  <h3 style={{ fontSize: '0.875rem', color: extendedColors.gray[500], margin: 0, marginBottom: '0.5rem' }}>Organizations</h3>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 600, color: extendedColors.gray[900], margin: 0 }}>{stats.totalOrgs}</p>
+                </div>
+                
+                <div style={{
+                  backgroundColor: extendedColors.white,
+                  borderRadius: '0.5rem',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                  padding: '1rem',
+                  border: `1px solid ${extendedColors.gray[100]}`
+                }}>
+                  <h3 style={{ fontSize: '0.875rem', color: extendedColors.gray[500], margin: 0, marginBottom: '0.5rem' }}>Users</h3>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 600, color: extendedColors.gray[900], margin: 0 }}>{stats.totalUsers}</p>
+                </div>
+                
+                <div style={{
+                  backgroundColor: extendedColors.white,
+                  borderRadius: '0.5rem',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                  padding: '1rem',
+                  border: `1px solid ${extendedColors.gray[100]}`
+                }}>
+                  <h3 style={{ fontSize: '0.875rem', color: extendedColors.gray[500], margin: 0, marginBottom: '0.5rem' }}>Total Trips</h3>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 600, color: extendedColors.gray[900], margin: 0 }}>{stats.totalTrips}</p>
+                </div>
+                
+                <div style={{
+                  backgroundColor: extendedColors.white,
+                  borderRadius: '0.5rem',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                  padding: '1rem',
+                  border: `1px solid ${extendedColors.gray[100]}`
+                }}>
+                  <h3 style={{ fontSize: '0.875rem', color: extendedColors.gray[500], margin: 0, marginBottom: '0.5rem' }}>Total Credits</h3>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 600, color: extendedColors.green[600], margin: 0 }}>{stats.totalCredits.toFixed(2)}</p>
+                </div>
+                
+                <div style={{
+                  backgroundColor: extendedColors.white,
+                  borderRadius: '0.5rem',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+                  padding: '1rem',
+                  border: `1px solid ${extendedColors.gray[100]}`,
+                  borderLeft: `4px solid ${extendedColors.amber[500]}`
+                }}>
+                  <h3 style={{ fontSize: '0.875rem', color: extendedColors.gray[500], margin: 0, marginBottom: '0.5rem' }}>Pending Approvals</h3>
+                  <p style={{ fontSize: '1.5rem', fontWeight: 600, color: extendedColors.amber[600], margin: 0 }}>{stats.pendingApprovals}</p>
+                </div>
+              </div>
+              
               {/* Tab Navigation */}
               <div style={{ 
                 display: 'flex', 
                 gap: '0.5rem', 
-                borderBottom: `1px solid ${colors.gray[200]}`,
+                borderBottom: `1px solid ${extendedColors.gray[200]}`,
                 paddingBottom: '0.5rem',
                 marginBottom: '1rem',
                 overflowX: 'auto'
@@ -488,25 +864,86 @@ const AdminDashboard: React.FC = () => {
                 {renderTab('trips', 'Trips')}
               </div>
               
+              {/* Add search bar for all tabs */}
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '1rem'
+              }}>
+                <div style={{
+                  position: 'relative',
+                  flexGrow: 1,
+                  maxWidth: '500px'
+                }}>
+                  <input
+                    type="text"
+                    placeholder={`Search ${activeTab}...`}
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.75rem 1rem',
+                      paddingLeft: '2.5rem',
+                      borderRadius: '0.375rem',
+                      border: `1px solid ${extendedColors.gray[300]}`,
+                      fontSize: '0.875rem',
+                      outline: 'none',
+                      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)'
+                    }}
+                  />
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={extendedColors.gray[400]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}>
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                </div>
+                
+                <button
+                  onClick={() => exportData(activeTab)}
+                  disabled={isExporting}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.75rem 1rem',
+                    backgroundColor: extendedColors.blue[50],
+                    color: extendedColors.blue[700],
+                    border: `1px solid ${extendedColors.blue[200]}`,
+                    borderRadius: '0.375rem',
+                    fontSize: '0.875rem',
+                    fontWeight: 500,
+                    cursor: isExporting ? 'not-allowed' : 'pointer',
+                    opacity: isExporting ? 0.7 : 1
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  {isExporting ? 'Exporting...' : 'Export Data'}
+                </button>
+              </div>
+              
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 {/* Organizations Tab */}
                 {activeTab === 'organizations' && (
                   <div style={styles.card}>
                     <div style={{ 
                       padding: '1.25rem 1.5rem', 
-                      borderBottom: `1px solid ${colors.gray[100]}` 
+                      borderBottom: `1px solid ${extendedColors.gray[100]}` 
                     }}>
                       <h3 style={{ 
                         fontSize: '1.25rem', 
                         fontWeight: 600, 
-                        color: colors.gray[900], 
+                        color: extendedColors.gray[900], 
                         marginBottom: '0.5rem' 
                       }}>
                         Organizations
                       </h3>
                       <p style={{ 
                         fontSize: '0.875rem', 
-                        color: colors.gray[600],
+                        color: extendedColors.gray[600],
                         margin: 0
                       }}>
                         All registered organizations in the system
@@ -523,21 +960,22 @@ const AdminDashboard: React.FC = () => {
                             <th style={styles.tableHeader}>Trading Credits</th>
                             <th style={styles.tableHeader}>Available Money</th>
                             <th style={styles.tableHeader}>Created</th>
+                            <th style={styles.tableHeader}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {organizations.length === 0 ? (
+                          {getFilteredData(organizations, ['name', 'domain']).length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ padding: '2rem', textAlign: 'center' }}>
+                              <td colSpan={7} style={{ padding: '2rem', textAlign: 'center' }}>
                                 No organizations found
                               </td>
                             </tr>
                           ) : (
-                            organizations.map(org => (
+                            getFilteredData(organizations, ['name', 'domain']).map(org => (
                               <tr 
                                 key={org.id}
                                 style={styles.tableRow}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.gray[50]}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = extendedColors.gray[50]}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
                               >
                                 <td style={styles.tableCell}>{org.name}</td>
@@ -546,6 +984,37 @@ const AdminDashboard: React.FC = () => {
                                 <td style={styles.tableCell}>{org.totalCredits.toFixed(2)}</td>
                                 <td style={styles.tableCell}>${org.availableMoney.toFixed(2)}</td>
                                 <td style={styles.tableCell}>{formatDate(org.createdAt)}</td>
+                                <td style={styles.tableCell}>
+                                  <button
+                                    onClick={() => {
+                                      setItemToDelete({
+                                        id: org.id,
+                                        type: 'organization',
+                                        name: org.name
+                                      });
+                                      setShowDeleteModal(true);
+                                    }}
+                                    style={{
+                                      backgroundColor: extendedColors.red[50],
+                                      color: extendedColors.red[700],
+                                      border: 'none',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '0.25rem',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -560,19 +1029,19 @@ const AdminDashboard: React.FC = () => {
                   <div style={styles.card}>
                     <div style={{ 
                       padding: '1.25rem 1.5rem', 
-                      borderBottom: `1px solid ${colors.gray[100]}` 
+                      borderBottom: `1px solid ${extendedColors.gray[100]}` 
                     }}>
                       <h3 style={{ 
                         fontSize: '1.25rem', 
                         fontWeight: 600, 
-                        color: colors.gray[900], 
+                        color: extendedColors.gray[900], 
                         marginBottom: '0.5rem' 
                       }}>
                         All Users
                       </h3>
                       <p style={{ 
                         fontSize: '0.875rem', 
-                        color: colors.gray[600],
+                        color: extendedColors.gray[600],
                         margin: 0
                       }}>
                         All users registered in the system
@@ -589,21 +1058,22 @@ const AdminDashboard: React.FC = () => {
                             <th style={styles.tableHeader}>Created</th>
                             <th style={styles.tableHeader}>Last Login</th>
                             <th style={styles.tableHeader}>Status</th>
+                            <th style={styles.tableHeader}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {allUsers.length === 0 ? (
+                          {getFilteredData(allUsers, ['name', 'email', 'role']).length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ padding: '2rem', textAlign: 'center' }}>
+                              <td colSpan={7} style={{ padding: '2rem', textAlign: 'center' }}>
                                 No users found
                               </td>
                             </tr>
                           ) : (
-                            allUsers.map(user => (
+                            getFilteredData(allUsers, ['name', 'email', 'role']).map(user => (
                               <tr 
                                 key={user.uid}
                                 style={styles.tableRow}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.gray[50]}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = extendedColors.gray[50]}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
                               >
                                 <td style={styles.tableCell}>{user.name}</td>
@@ -622,7 +1092,7 @@ const AdminDashboard: React.FC = () => {
                                           ? extendedColors.orange[100] 
                                           : user.role === 'employer' 
                                             ? extendedColors.green[100] 
-                                            : colors.gray[100],
+                                            : extendedColors.gray[100],
                                     color: 
                                       user.role === 'admin' 
                                         ? extendedColors.blue[700] 
@@ -630,7 +1100,7 @@ const AdminDashboard: React.FC = () => {
                                           ? extendedColors.orange[700] 
                                           : user.role === 'employer' 
                                             ? extendedColors.green[700] 
-                                            : colors.gray[700],
+                                            : extendedColors.gray[700],
                                   }}>
                                     {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
                                   </span>
@@ -650,6 +1120,37 @@ const AdminDashboard: React.FC = () => {
                                     {user.approved ? 'Approved' : 'Pending'}
                                   </span>
                                 </td>
+                                <td style={styles.tableCell}>
+                                  <button
+                                    onClick={() => {
+                                      setItemToDelete({
+                                        id: user.uid,
+                                        type: 'user',
+                                        name: user.name
+                                      });
+                                      setShowDeleteModal(true);
+                                    }}
+                                    style={{
+                                      backgroundColor: extendedColors.red[50],
+                                      color: extendedColors.red[700],
+                                      border: 'none',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '0.25rem',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -664,19 +1165,19 @@ const AdminDashboard: React.FC = () => {
                   <div style={styles.card}>
                     <div style={{ 
                       padding: '1.25rem 1.5rem', 
-                      borderBottom: `1px solid ${colors.gray[100]}` 
+                      borderBottom: `1px solid ${extendedColors.gray[100]}` 
                     }}>
                       <h3 style={{ 
                         fontSize: '1.25rem', 
                         fontWeight: 600, 
-                        color: colors.gray[900], 
+                        color: extendedColors.gray[900], 
                         marginBottom: '0.5rem' 
                       }}>
                         Employees
                       </h3>
                       <p style={{ 
                         fontSize: '0.875rem', 
-                        color: colors.gray[600],
+                        color: extendedColors.gray[600],
                         margin: 0
                       }}>
                         All employees registered in the system
@@ -693,21 +1194,22 @@ const AdminDashboard: React.FC = () => {
                             <th style={styles.tableHeader}>Organization</th>
                             <th style={styles.tableHeader}>Carbon Credits</th>
                             <th style={styles.tableHeader}>Status</th>
+                            <th style={styles.tableHeader}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {employees.length === 0 ? (
+                          {getFilteredData(employees, ['name', 'email', 'domain']).length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ padding: '2rem', textAlign: 'center' }}>
+                              <td colSpan={7} style={{ padding: '2rem', textAlign: 'center' }}>
                                 No employees found
                               </td>
                             </tr>
                           ) : (
-                            employees.map(employee => (
+                            getFilteredData(employees, ['name', 'email', 'domain']).map(employee => (
                               <tr 
                                 key={employee.id}
                                 style={styles.tableRow}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.gray[50]}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = extendedColors.gray[50]}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
                               >
                                 <td style={styles.tableCell}>{employee.name}</td>
@@ -730,6 +1232,37 @@ const AdminDashboard: React.FC = () => {
                                     {employee.approved ? 'Approved' : 'Pending'}
                                   </span>
                                 </td>
+                                <td style={styles.tableCell}>
+                                  <button
+                                    onClick={() => {
+                                      setItemToDelete({
+                                        id: employee.id,
+                                        type: 'employee',
+                                        name: employee.name
+                                      });
+                                      setShowDeleteModal(true);
+                                    }}
+                                    style={{
+                                      backgroundColor: extendedColors.red[50],
+                                      color: extendedColors.red[700],
+                                      border: 'none',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '0.25rem',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -744,19 +1277,19 @@ const AdminDashboard: React.FC = () => {
                   <div style={styles.card}>
                     <div style={{ 
                       padding: '1.25rem 1.5rem', 
-                      borderBottom: `1px solid ${colors.gray[100]}` 
+                      borderBottom: `1px solid ${extendedColors.gray[100]}` 
                     }}>
                       <h3 style={{ 
                         fontSize: '1.25rem', 
                         fontWeight: 600, 
-                        color: colors.gray[900], 
+                        color: extendedColors.gray[900], 
                         marginBottom: '0.5rem' 
                       }}>
                         Employers
                       </h3>
                       <p style={{ 
                         fontSize: '0.875rem', 
-                        color: colors.gray[600],
+                        color: extendedColors.gray[600],
                         margin: 0
                       }}>
                         All organization employers in the system
@@ -772,21 +1305,22 @@ const AdminDashboard: React.FC = () => {
                             <th style={styles.tableHeader}>Organization</th>
                             <th style={styles.tableHeader}>Created</th>
                             <th style={styles.tableHeader}>Status</th>
+                            <th style={styles.tableHeader}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {employers.length === 0 ? (
+                          {getFilteredData(employers, ['name', 'email', 'domain']).length === 0 ? (
                             <tr>
-                              <td colSpan={5} style={{ padding: '2rem', textAlign: 'center' }}>
+                              <td colSpan={6} style={{ padding: '2rem', textAlign: 'center' }}>
                                 No employers found
                               </td>
                             </tr>
                           ) : (
-                            employers.map(employer => (
+                            getFilteredData(employers, ['name', 'email', 'domain']).map(employer => (
                               <tr 
                                 key={employer.uid}
                                 style={styles.tableRow}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.gray[50]}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = extendedColors.gray[50]}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
                               >
                                 <td style={styles.tableCell}>{employer.name}</td>
@@ -808,6 +1342,37 @@ const AdminDashboard: React.FC = () => {
                                     {employer.approved ? 'Approved' : 'Pending'}
                                   </span>
                                 </td>
+                                <td style={styles.tableCell}>
+                                  <button
+                                    onClick={() => {
+                                      setItemToDelete({
+                                        id: employer.uid,
+                                        type: 'employer',
+                                        name: employer.name
+                                      });
+                                      setShowDeleteModal(true);
+                                    }}
+                                    style={{
+                                      backgroundColor: extendedColors.red[50],
+                                      color: extendedColors.red[700],
+                                      border: 'none',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '0.25rem',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -822,19 +1387,19 @@ const AdminDashboard: React.FC = () => {
                   <div style={styles.card}>
                     <div style={{ 
                       padding: '1.25rem 1.5rem', 
-                      borderBottom: `1px solid ${colors.gray[100]}` 
+                      borderBottom: `1px solid ${extendedColors.gray[100]}` 
                     }}>
                       <h3 style={{ 
                         fontSize: '1.25rem', 
                         fontWeight: 600, 
-                        color: colors.gray[900], 
+                        color: extendedColors.gray[900], 
                         marginBottom: '0.5rem' 
                       }}>
                         Credit Transactions
                       </h3>
                       <p style={{ 
                         fontSize: '0.875rem', 
-                        color: colors.gray[600],
+                        color: extendedColors.gray[600],
                         margin: 0
                       }}>
                         All carbon credit transactions between organizations
@@ -851,21 +1416,22 @@ const AdminDashboard: React.FC = () => {
                             <th style={styles.tableHeader}>Credits</th>
                             <th style={styles.tableHeader}>Price</th>
                             <th style={styles.tableHeader}>Status</th>
+                            <th style={styles.tableHeader}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {transactions.length === 0 ? (
+                          {getFilteredData(transactions, ['sellerOrgName', 'buyerOrgName', 'status']).length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ padding: '2rem', textAlign: 'center' }}>
+                              <td colSpan={7} style={{ padding: '2rem', textAlign: 'center' }}>
                                 No transactions found
                               </td>
                             </tr>
                           ) : (
-                            transactions.map(transaction => (
+                            getFilteredData(transactions, ['sellerOrgName', 'buyerOrgName', 'status']).map(transaction => (
                               <tr 
                                 key={transaction.id}
                                 style={styles.tableRow}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.gray[50]}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = extendedColors.gray[50]}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
                               >
                                 <td style={styles.tableCell}>{formatDate(transaction.createdAt)}</td>
@@ -896,6 +1462,37 @@ const AdminDashboard: React.FC = () => {
                                     {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
                                   </span>
                                 </td>
+                                <td style={styles.tableCell}>
+                                  <button
+                                    onClick={() => {
+                                      setItemToDelete({
+                                        id: transaction.id,
+                                        type: 'transaction',
+                                        name: `${transaction.sellerOrgName} to ${transaction.buyerOrgName}`
+                                      });
+                                      setShowDeleteModal(true);
+                                    }}
+                                    style={{
+                                      backgroundColor: extendedColors.red[50],
+                                      color: extendedColors.red[700],
+                                      border: 'none',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '0.25rem',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -910,19 +1507,19 @@ const AdminDashboard: React.FC = () => {
                   <div style={styles.card}>
                     <div style={{ 
                       padding: '1.25rem 1.5rem', 
-                      borderBottom: `1px solid ${colors.gray[100]}` 
+                      borderBottom: `1px solid ${extendedColors.gray[100]}` 
                     }}>
                       <h3 style={{ 
                         fontSize: '1.25rem', 
                         fontWeight: 600, 
-                        color: colors.gray[900], 
+                        color: extendedColors.gray[900], 
                         marginBottom: '0.5rem' 
                       }}>
                         Employee Trips
                       </h3>
                       <p style={{ 
                         fontSize: '0.875rem', 
-                        color: colors.gray[600],
+                        color: extendedColors.gray[600],
                         margin: 0
                       }}>
                         All recorded sustainable transportation trips
@@ -939,21 +1536,22 @@ const AdminDashboard: React.FC = () => {
                             <th style={styles.tableHeader}>Distance (km)</th>
                             <th style={styles.tableHeader}>Credits Earned</th>
                             <th style={styles.tableHeader}>Work From Home</th>
+                            <th style={styles.tableHeader}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {trips.length === 0 ? (
+                          {getFilteredData(trips, ['userId', 'transportMode']).length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ padding: '2rem', textAlign: 'center' }}>
+                              <td colSpan={7} style={{ padding: '2rem', textAlign: 'center' }}>
                                 No trips found
                               </td>
                             </tr>
                           ) : (
-                            trips.map(trip => (
+                            getFilteredData(trips, ['userId', 'transportMode']).map(trip => (
                               <tr 
                                 key={trip.id}
                                 style={styles.tableRow}
-                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.gray[50]}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = extendedColors.gray[50]}
                                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
                               >
                                 <td style={styles.tableCell}>
@@ -968,6 +1566,37 @@ const AdminDashboard: React.FC = () => {
                                 <td style={styles.tableCell}>{trip.distanceKm.toFixed(2)}</td>
                                 <td style={styles.tableCell}>{trip.carbonCredits.toFixed(2)}</td>
                                 <td style={styles.tableCell}>{trip.isWorkFromHome ? 'Yes' : 'No'}</td>
+                                <td style={styles.tableCell}>
+                                  <button
+                                    onClick={() => {
+                                      setItemToDelete({
+                                        id: trip.id,
+                                        type: 'trip',
+                                        name: `${getUserNameById(trip.userId)}'s trip`
+                                      });
+                                      setShowDeleteModal(true);
+                                    }}
+                                    style={{
+                                      backgroundColor: extendedColors.red[50],
+                                      color: extendedColors.red[700],
+                                      border: 'none',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '0.25rem',
+                                      fontSize: '0.75rem',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem'
+                                    }}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M3 6h18"></path>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </td>
                               </tr>
                             ))
                           )}
@@ -979,10 +1608,19 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
           )}
+          
+          {/* Render the delete confirmation modal */}
+          <DeleteConfirmationModal />
+          
+          {/* Toast notification */}
+          {toast.visible && (
+            <Toast 
+              toast={toast}
+              onClose={hideToast} 
+            />
+          )}
         </div>
       </main>
-      
-      <Toast toast={toast} onClose={hideToast} />
     </>
   );
 };

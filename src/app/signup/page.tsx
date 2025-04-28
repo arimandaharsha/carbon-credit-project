@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import Logo from '@/components/ui/Logo';
 
 // React-based styles
 const styles = {
@@ -23,20 +24,17 @@ const styles = {
     textAlign: 'center' as const
   },
   logoContainer: {
-    width: '5rem',
+    width: '10rem',
     height: '5rem',
-    backgroundColor: 'white',
-    borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    margin: '0 auto',
-    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+    margin: '0 auto'
   },
-  logoIcon: {
-    width: '3rem',
-    height: '3rem',
-    color: '#16a34a' // green-600
+  logo: {
+    width: '100%',
+    height: 'auto',
+    objectFit: 'contain' as const
   },
   title: {
     marginTop: '1rem',
@@ -196,26 +194,11 @@ export default function SignupPage() {
     <div style={styles.container}>
       <div style={styles.wrapper}>
         <div style={styles.header}>
-          <div style={styles.logoContainer}>
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              style={styles.logoIcon} 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={2} 
-                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" 
-              />
-            </svg>
+          <div style={{display: 'flex', justifyContent: 'center', width: '100%'}}>
+            <Logo width="12rem" height="6rem" />
           </div>
-          <h1 style={styles.title}>Create an Account</h1>
-          <p style={styles.subtitle}>
-            Choose the account type that best describes your role
-          </p>
+          <h1 style={styles.title}>Sign Up</h1>
+          <p style={styles.subtitle}>Choose your account type to get started</p>
         </div>
         
         <div style={styles.card}>

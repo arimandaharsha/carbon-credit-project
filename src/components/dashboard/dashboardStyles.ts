@@ -77,18 +77,17 @@ export const styles = {
     display: 'flex',
     flexDirection: 'column' as const,
     height: '100vh',
-    backgroundColor: colors.green[50],
+    backgroundColor: '#f9fafb',
   },
   mainContent: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column' as const,
-    overflow: 'hidden',
+    overflow: 'auto',
   },
   contentArea: {
     flex: 1,
-    overflowY: 'auto' as const,
-    padding: '1.5rem',
+    padding: '20px',
   },
   maxWidthWrapper: {
     maxWidth: '1200px',
@@ -542,6 +541,77 @@ export const styles = {
       backgroundColor: colors.green[500],
     },
   },
+  loadingContainer: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '3rem'
+  },
+  loadingSpinner: {
+    border: '4px solid rgba(0, 0, 0, 0.1)',
+    borderLeftColor: '#10B981',
+    borderRadius: '50%',
+    width: '2rem',
+    height: '2rem',
+    animation: 'spin 1s linear infinite'
+  },
+  loadingText: {
+    marginTop: '1rem',
+    color: '#4B5563',
+    fontSize: '0.875rem'
+  },
+  dashboardContainer: {
+    padding: '1.5rem'
+  },
+  statsRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '1rem',
+    marginBottom: '1.5rem'
+  },
+  statsCard: {
+    backgroundColor: 'white',
+    padding: '1rem',
+    borderRadius: '0.5rem',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+  },
+  statsTitle: {
+    fontSize: '0.875rem',
+    color: '#6B7280',
+    margin: 0
+  },
+  statsValue: {
+    fontSize: '1.25rem',
+    fontWeight: 600,
+    marginTop: '0.5rem',
+    marginBottom: 0
+  },
+  dashboardGrid: {
+    marginBottom: '1.5rem'
+  },
+  textButton: {
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: '#059669',
+    cursor: 'pointer',
+    padding: '0.25rem 0.5rem',
+    borderRadius: '0.25rem',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    transition: 'background-color 0.2s ease'
+  },
+  toast: {
+    position: 'fixed' as const,
+    bottom: '1rem',
+    right: '1rem',
+    backgroundColor: '#10B981',
+    color: 'white',
+    padding: '0.75rem 1rem',
+    borderRadius: '0.5rem',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+    zIndex: 1000
+  }
 };
 
 // For React components that need type safety

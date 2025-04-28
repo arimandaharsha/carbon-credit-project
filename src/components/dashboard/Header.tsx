@@ -6,6 +6,7 @@ import { styles, colors } from './dashboardStyles';
 import { UserData } from './dashboardTypes';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAvatarInitials } from './dashboardUtils';
+import Logo from '@/components/ui/Logo';
 
 interface HeaderProps {
   userData: UserData | null;
@@ -44,6 +45,7 @@ const Header: React.FC<HeaderProps> = ({
   return (
     <header style={styles.header}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
+        <Logo width="5rem" height="2.5rem" />
         <h1 style={{ 
           fontSize: '1.25rem', 
           fontWeight: 600, 

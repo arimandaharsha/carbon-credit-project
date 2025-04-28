@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import Toast from '@/components/ui/Toast';
+import Logo from '@/components/ui/Logo';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -382,6 +383,7 @@ export default function EmployeeRegistrationPage() {
     return (
       <div style={styles.successContainer}>
         <div style={styles.successCard}>
+          <Logo width="10rem" height="5rem" style={{ margin: '0 auto 1rem' }} />
           <div style={styles.successIconWrapper}>
             <svg 
               xmlns="http://www.w3.org/2000/svg" 
@@ -419,7 +421,10 @@ export default function EmployeeRegistrationPage() {
   return (
     <div style={styles.container}>
       <div style={styles.formContainer}>
-        <h1 style={styles.title}>Join Your Organization</h1>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <Logo width="10rem" height="5rem" />
+          <h1 style={styles.title}>Join Your Organization</h1>
+        </div>
         
         <form onSubmit={handleRegistration}>
           <div style={styles.formGroup}>

@@ -56,23 +56,47 @@ const EmployerDashboard: React.FC = () => {
   // Add a ref to track if available sales have been loaded
   const availableSalesLoadedRef = useRef<boolean>(false);
   
-  // Add a ref to track if credits have been calculated
-  const creditsCalculatedRef = useRef<boolean>(false);
-  
   const { user, userData } = useAuth();
 
+  // Add data loading flags to prevent redundant refreshes
+
+  // Modify the useEffect hooks at the beginning with better load tracking
   useEffect(() => {
-    if (userData?.domain) {
+    if (userData?.domain && !currentOrganization) {
       fetchOrganizationByDomain(userData.domain);
       fetchPendingEmployees(userData.domain);
     }
-  }, [userData]);
+  }, [userData, currentOrganization]);
 
-  // Fix infinite loop by adding a ref check
+  // Track data loading states more precisely
+  const dataLoadedRef = useRef<{
+    organization: boolean;
+    employees: boolean;
+    trips: boolean;
+    pendingEmployees: boolean;
+    availableSales: boolean;
+    transactions: boolean;
+  }>({
+    organization: false,
+    employees: false,
+    trips: false,
+    pendingEmployees: false,
+    availableSales: false,
+    transactions: false
+  });
+
+  // Replace the useEffect for fetchAvailableSales and fetchTransactionHistory
   useEffect(() => {
-    if (currentOrganization?.id && !transactionsLoadedRef.current) {
-      transactionsLoadedRef.current = true;
-      fetchTransactionHistory(currentOrganization.id, false);
+    if (currentOrganization?.id) {
+      if (!transactionsLoadedRef.current) {
+        transactionsLoadedRef.current = true;
+        fetchTransactionHistory(currentOrganization.id, false);
+      }
+      
+      if (!availableSalesLoadedRef.current) {
+        availableSalesLoadedRef.current = true;
+        fetchAvailableSales(false);
+      }
     }
   }, [currentOrganization]);
 
@@ -101,27 +125,16 @@ const EmployerDashboard: React.FC = () => {
     }
   }, [employees, searchQuery]);
 
-  // Update the useEffect for credit calculation to prevent unnecessary refreshes
+  // Add a separate useEffect to run when employees are loaded
   useEffect(() => {
-    if (currentOrganization && employees.length > 0 && !creditsCalculatedRef.current) {
+    if (currentOrganization && employees.length > 0) {
       // Get all employee IDs for credit calculation
       const employeeIds = employees.map(emp => emp.id);
       
       // Calculate total credits based on employee trips and transactions
       calculateTotalOrgCredits(currentOrganization.id, employeeIds);
-      
-      // Mark credits as calculated so we don't repeat unnecessarily
-      creditsCalculatedRef.current = true;
     }
   }, [currentOrganization, employees]);
-
-  // Fix infinite loop by adding a ref check for availableSales
-  useEffect(() => {
-    if (currentOrganization?.id && !availableSalesLoadedRef.current) {
-      availableSalesLoadedRef.current = true;
-      fetchAvailableSales();
-    }
-  }, [currentOrganization]);
 
   const fetchCurrentOrganization = async (orgId: string) => {
     try {
@@ -152,7 +165,10 @@ const EmployerDashboard: React.FC = () => {
     }
   };
 
+  // Update the fetchOrganizationByDomain function to avoid unnecessary refresh
   const fetchOrganizationByDomain = async (domain: string) => {
+    if (dataLoadedRef.current.organization) return;
+    
     try {
       setLoading(true);
       
@@ -180,7 +196,12 @@ const EmployerDashboard: React.FC = () => {
         };
         
         setCurrentOrganization(organization);
-        await fetchOrganizationEmployees(domain);
+        dataLoadedRef.current.organization = true;
+        
+        // Only fetch employees if they haven't been loaded yet
+        if (!dataLoadedRef.current.employees) {
+          await fetchOrganizationEmployees(domain);
+        }
       } else {
         console.error("No organization found for domain:", domain);
         showToast('No organization found for your domain', 'error');
@@ -193,7 +214,10 @@ const EmployerDashboard: React.FC = () => {
     }
   };
 
+  // Update the fetchOrganizationEmployees function
   const fetchOrganizationEmployees = async (domain: string) => {
+    if (dataLoadedRef.current.employees) return;
+    
     try {
       const employeesQuery = query(
         collection(db, 'users'),
@@ -225,11 +249,14 @@ const EmployerDashboard: React.FC = () => {
       
       setEmployees(employeesList);
       setAllEmployees(employeesList);
+      dataLoadedRef.current.employees = true;
       
-      // Fetch trips for these employees
-      await fetchEmployeeTrips(employeeIds);
+      // Fetch trips for these employees if not already loaded
+      if (!dataLoadedRef.current.trips && employeeIds.length > 0) {
+        await fetchEmployeeTrips(employeeIds);
+      }
       
-      // Calculate total credits for the organization if there are employees
+      // Calculate total credits for the organization if there are employees and not already calculated
       if (employeeIds.length > 0 && currentOrganization) {
         await calculateTotalOrgCredits(currentOrganization.id, employeeIds);
       }
@@ -239,8 +266,10 @@ const EmployerDashboard: React.FC = () => {
     }
   };
 
-  // Optimize fetchEmployeeTrips to prevent unnecessary updates when data hasn't changed
-  const fetchEmployeeTrips = async (employeeIds: string[]) => {
+  // Update fetchEmployeeTrips to avoid unnecessary refreshes
+  const fetchEmployeeTrips = async (employeeIds: string[], forceRefresh = false) => {
+    if (dataLoadedRef.current.trips && !forceRefresh) return;
+    
     try {
       if (employeeIds.length === 0) {
         setTrips([]);
@@ -256,8 +285,6 @@ const EmployerDashboard: React.FC = () => {
       employeeIds.forEach(id => {
         employeeCreditMap[id] = 0;
       });
-      
-      let hasNewTrips = false;
       
       // Process employee IDs in batches
       for (let i = 0; i < employeeIds.length; i += batchSize) {
@@ -294,11 +321,6 @@ const EmployerDashboard: React.FC = () => {
           
           tripsList.push(trip);
           
-          // Track if we found a trip that wasn't in our previous list
-          if (!trips.some(existingTrip => existingTrip.id === trip.id)) {
-            hasNewTrips = true;
-          }
-          
           // Update employee credit map for non-rejected trips
           if (!trip.rejected && trip.userId) {
             employeeCreditMap[trip.userId] = (employeeCreditMap[trip.userId] || 0) + trip.carbonCredits;
@@ -306,56 +328,64 @@ const EmployerDashboard: React.FC = () => {
         });
       }
       
-      // Only update if we have new trips or the counts changed
-      if (hasNewTrips || tripsList.length !== trips.length) {
-        console.log("Employee Credit Map from trips:", employeeCreditMap);
+      // Update employees with calculated credits from trips
+      setEmployees(prevEmployees => 
+        prevEmployees.map(employee => ({
+          ...employee,
+          calculatedCredits: employeeCreditMap[employee.id] || 0
+        }))
+      );
+      
+      // Update filtered employees to ensure sorting is applied
+      setFilteredEmps(prevFiltered => {
+        // Filter based on search query if needed
+        let filtered = [...employees];
+        if (searchQuery.trim() !== '') {
+          const lowercaseQuery = searchQuery.toLowerCase();
+          filtered = filtered.filter(
+            emp => 
+              emp.name.toLowerCase().includes(lowercaseQuery) || 
+              emp.email.toLowerCase().includes(lowercaseQuery)
+          );
+        }
         
-        // Update employees with calculated credits from trips
-        setEmployees(prevEmployees => 
-          prevEmployees.map(employee => ({
-            ...employee,
-            calculatedCredits: employeeCreditMap[employee.id] || 0
-          }))
-        );
-        
-        // Update the trips state
-        setTrips(tripsList);
-      }
+        // Sort by calculated credits from trips
+        return filtered.sort((a, b) => {
+          const creditsA = employeeCreditMap[a.id] || 0;
+          const creditsB = employeeCreditMap[b.id] || 0;
+          return creditsB - creditsA;
+        });
+      });
+      
+      setTrips(tripsList);
+      dataLoadedRef.current.trips = true;
     } catch (error) {
       console.error("Error fetching employee trips:", error);
       showToast('Failed to load trip data', 'error');
     }
   };
 
-  // Optimize the calculateTotalOrgCredits function to handle batched queries
+  // Function to calculate total credits
   const calculateTotalOrgCredits = async (orgId: string, employeeIds: string[]) => {
     try {
       // 1. Sum of credits earned by employees (from trips)
       let employeeEarnedCredits = 0;
       
-      // Process employee IDs in batches for trips
-      const batchSize = 10; // Firebase limit for 'in' queries
+      // Get all trips made by the organization's employees
+      const tripsQuery = query(
+        collection(db, 'trips'),
+        where('userId', 'in', employeeIds)
+      );
       
-      // Process employee IDs in batches
-      for (let i = 0; i < employeeIds.length; i += batchSize) {
-        const batch = employeeIds.slice(i, i + batchSize);
-        
-        // Get all trips made by this batch of employees
-        const tripsQuery = query(
-          collection(db, 'trips'),
-          where('userId', 'in', batch)
-        );
-        
-        const tripsSnapshot = await getDocs(tripsQuery);
-        
-        tripsSnapshot.forEach(doc => {
-          const tripData = doc.data();
-          // Only count non-rejected trips
-          if (!tripData.rejected) {
-            employeeEarnedCredits += tripData.carbonCredits || 0;
-          }
-        });
-      }
+      const tripsSnapshot = await getDocs(tripsQuery);
+      
+      tripsSnapshot.forEach(doc => {
+        const tripData = doc.data();
+        // Only count non-rejected trips
+        if (!tripData.rejected) {
+          employeeEarnedCredits += tripData.carbonCredits || 0;
+        }
+      });
       
       // 2. Credits bought (completed purchase transactions)
       let boughtCredits = 0;
@@ -392,41 +422,27 @@ const EmployerDashboard: React.FC = () => {
       // 4. Calculate total: earned + bought - sold
       const totalCredits = employeeEarnedCredits + boughtCredits - soldCredits;
       
-      console.log('Credit calculation results:', {
-        employeeEarnedCredits,
-        boughtCredits,
-        soldCredits,
-        totalCredits
-      });
-      
       // Update states with the calculated values
       setEmployeeEarnedCredits(employeeEarnedCredits);
       setTotalOrgCredits(totalCredits);
       
-      // Only update the database if there's a meaningful change
+      // Update organization document
       const orgRef = doc(db, 'organizations', orgId);
-      const orgDoc = await getDoc(orgRef);
-      const currentData = orgDoc.data();
       
-      if (
-        currentData?.carbonCredits !== employeeEarnedCredits || 
-        currentData?.totalCredits !== totalCredits
-      ) {
-        // Update the carbonCredits field (earned credits from employees only)
-        // and totalCredits field (earned + bought - sold)
-        await updateDoc(orgRef, {
+      // Update the carbonCredits field (earned credits from employees only)
+      // and totalCredits field (earned + bought - sold)
+      await updateDoc(orgRef, {
+        carbonCredits: employeeEarnedCredits,
+        totalCredits: totalCredits
+      });
+      
+      // Update local state
+      if (currentOrganization) {
+        setCurrentOrganization({
+          ...currentOrganization,
           carbonCredits: employeeEarnedCredits,
           totalCredits: totalCredits
         });
-        
-        // Update local state
-        if (currentOrganization) {
-          setCurrentOrganization({
-            ...currentOrganization,
-            carbonCredits: employeeEarnedCredits,
-            totalCredits: totalCredits
-          });
-        }
       }
       
       return totalCredits;
@@ -437,7 +453,10 @@ const EmployerDashboard: React.FC = () => {
     }
   };
 
-  const fetchPendingEmployees = async (domain: string) => {
+  // Update fetchPendingEmployees to avoid unnecessary refreshes
+  const fetchPendingEmployees = async (domain: string, forceRefresh = false) => {
+    if (dataLoadedRef.current.pendingEmployees && !forceRefresh) return;
+    
     try {
       // Query the pending_employees collection
       const pendingEmployeesQuery = query(
@@ -469,6 +488,7 @@ const EmployerDashboard: React.FC = () => {
       }
       
       setPendingEmployees(pendingEmployeesList);
+      dataLoadedRef.current.pendingEmployees = true;
     } catch (error) {
       console.error("Error fetching pending employees:", error);
       showToast('Failed to load pending employees data', 'error');
@@ -928,7 +948,7 @@ const EmployerDashboard: React.FC = () => {
     }
   }, [currentOrganization]);
 
-  // Function to fetch available credit sales
+  // Update the fetchAvailableSales function
   const fetchAvailableSales = async (forceRefresh = false) => {
     if (!forceRefresh && availableSalesLoadedRef.current && availableSales.length > 0) {
       // Don't reload if already loaded unless forced
@@ -961,6 +981,7 @@ const EmployerDashboard: React.FC = () => {
       });
       
       setAvailableSales(salesList);
+      dataLoadedRef.current.availableSales = true;
       setIsLoadingSales(false);
     } catch (error) {
       console.error("Error fetching available sales:", error);
@@ -1057,132 +1078,79 @@ const EmployerDashboard: React.FC = () => {
     }
   };
 
-  // Function to fetch transaction history
+  // Update the fetchTransactionHistory function
   const fetchTransactionHistory = async (orgId: string, forceRefresh: boolean = false) => {
+    if (!forceRefresh && transactionsLoadedRef.current && transactions.length > 0) {
+      return;
+    }
+    
     try {
-      // Allow manual refresh by resetting the ref
-      if (forceRefresh) {
-        transactionsLoadedRef.current = true;
-      }
-      
       setIsLoadingTransactions(true);
       
-      // Query transactions where the organization is either the buyer or seller
-      const buyerTransactionsQuery = query(
-        collection(db, 'credit_transactions'),
-        where('buyerOrgId', '==', orgId),
-        orderBy('createdAt', 'desc')
-      );
-      
-      const sellerTransactionsQuery = query(
-        collection(db, 'credit_transactions'),
-        where('sellerOrgId', '==', orgId),
-        orderBy('createdAt', 'desc')
-      );
-      
-      const [buyerSnapshot, sellerSnapshot] = await Promise.all([
-        getDocs(buyerTransactionsQuery),
-        getDocs(sellerTransactionsQuery)
+      // Get all transactions where this org is the buyer or seller
+      const [buyerTransactions, sellerTransactions] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, 'credit_transactions'),
+            where('buyerOrgId', '==', orgId)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'credit_transactions'),
+            where('sellerOrgId', '==', orgId)
+          )
+        )
       ]);
       
-      const buyerTransactions: CreditTransaction[] = [];
-      const sellerTransactions: CreditTransaction[] = [];
+      const allTransactions: CreditTransaction[] = [];
       
-      buyerSnapshot.forEach(doc => {
+      // Process buyer transactions
+      buyerTransactions.forEach(doc => {
         const data = doc.data();
-        
-        // Handle different date formats for createdAt
-        let createdAtDate;
-        if (data.createdAt) {
-          if (data.createdAt.toDate && typeof data.createdAt.toDate === 'function') {
-            // It's a Firebase Timestamp object
-            createdAtDate = data.createdAt.toDate();
-          } else if (typeof data.createdAt === 'string') {
-            // It's a string (ISO format or other)
-            createdAtDate = new Date(data.createdAt);
-          } else {
-            // Use current date as fallback
-            createdAtDate = new Date();
-          }
-        } else {
-          createdAtDate = new Date();
-        }
-
-        // Handle different date formats for completedAt
-        let completedAtDate: Date | null = null;
-        if (data.completedAt) {
-          if (data.completedAt.toDate && typeof data.completedAt.toDate === 'function') {
-            completedAtDate = data.completedAt.toDate();
-          } else if (typeof data.completedAt === 'string') {
-            completedAtDate = new Date(data.completedAt);
-          }
-        }
-        
-        buyerTransactions.push({
+        allTransactions.push({
           id: doc.id,
+          sellerOrgId: data.sellerOrgId,
+          sellerOrgName: data.sellerOrgName,
+          buyerOrgId: data.buyerOrgId,
+          buyerOrgName: data.buyerOrgName,
           creditAmount: data.creditAmount,
           price: data.price,
-          buyerOrgId: data.buyerOrgId,
-          sellerOrgId: data.sellerOrgId,
-          buyerOrgName: data.buyerOrgName || 'Unknown',
-          sellerOrgName: data.sellerOrgName || 'Unknown',
-          status: data.status || 'completed',
-          createdAt: createdAtDate,
-          completedAt: completedAtDate
+          status: data.status,
+          createdAt: data.createdAt,
+          transactionType: 'purchase'
         });
       });
       
-      sellerSnapshot.forEach(doc => {
+      // Process seller transactions
+      sellerTransactions.forEach(doc => {
         const data = doc.data();
         
-        // Handle different date formats for createdAt
-        let createdAtDate;
-        if (data.createdAt) {
-          if (data.createdAt.toDate && typeof data.createdAt.toDate === 'function') {
-            // It's a Firebase Timestamp object
-            createdAtDate = data.createdAt.toDate();
-          } else if (typeof data.createdAt === 'string') {
-            // It's a string (ISO format or other)
-            createdAtDate = new Date(data.createdAt);
-          } else {
-            // Use current date as fallback
-            createdAtDate = new Date();
-          }
-        } else {
-          createdAtDate = new Date();
+        // Avoid duplicating transactions (that are in both buyer and seller queries)
+        if (data.buyerOrgId !== orgId) {
+          allTransactions.push({
+            id: doc.id,
+            sellerOrgId: data.sellerOrgId,
+            sellerOrgName: data.sellerOrgName,
+            buyerOrgId: data.buyerOrgId || '',
+            buyerOrgName: data.buyerOrgName || '',
+            creditAmount: data.creditAmount,
+            price: data.price,
+            status: data.status,
+            createdAt: data.createdAt,
+            transactionType: 'sale'
+          });
         }
-
-        // Handle different date formats for completedAt
-        let completedAtDate: Date | null = null;
-        if (data.completedAt) {
-          if (data.completedAt.toDate && typeof data.completedAt.toDate === 'function') {
-            completedAtDate = data.completedAt.toDate();
-          } else if (typeof data.completedAt === 'string') {
-            completedAtDate = new Date(data.completedAt);
-          }
-        }
-        
-        sellerTransactions.push({
-          id: doc.id,
-          creditAmount: data.creditAmount,
-          price: data.price,
-          buyerOrgId: data.buyerOrgId,
-          sellerOrgId: data.sellerOrgId,
-          buyerOrgName: data.buyerOrgName || 'Unknown',
-          sellerOrgName: data.sellerOrgName || 'Unknown',
-          status: data.status || 'completed',
-          createdAt: createdAtDate,
-          completedAt: completedAtDate
-        });
       });
       
-      // Combine both arrays and sort by date (newest first)
-      const allTransactions = [...buyerTransactions, ...sellerTransactions].sort((a, b) => {
-        // We've already converted createdAt to Date objects when creating the transaction objects
-        // So we can safely assume they are Date objects here
-        const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
-        const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
-        return dateB - dateA;
+      // Sort by creation date (newest first)
+      allTransactions.sort((a, b) => {
+        // Convert to dates if they're not already
+        const dateA = typeof a.createdAt === 'string' ? new Date(a.createdAt) : a.createdAt;
+        const dateB = typeof b.createdAt === 'string' ? new Date(b.createdAt) : b.createdAt;
+        
+        // Compare dates (newest first)
+        return (dateB as any) - (dateA as any);
       });
       
       // Remove duplicate transactions (same id)
@@ -1191,6 +1159,7 @@ const EmployerDashboard: React.FC = () => {
       );
       
       setTransactions(uniqueTransactions);
+      dataLoadedRef.current.transactions = true;
     } catch (error) {
       console.error("Error fetching transaction history:", error);
       showToast('Failed to load transaction history', 'error');
@@ -1249,6 +1218,9 @@ const EmployerDashboard: React.FC = () => {
 
   // Add a new component to display all trips
   const AllEmployeeTripsTable = () => {
+    // Use the scroll preservation hook
+    useScrollPreservation(employeeTripsScrollRef);
+    
     // Create a map of employee IDs to names for displaying in the trips table
     const employeesMap: Record<string, string> = {};
     allEmployees.forEach(emp => {
@@ -1261,209 +1233,61 @@ const EmployerDashboard: React.FC = () => {
     );
     
     return (
-      <div style={{
-        ...styles.card,
-        marginBottom: '1.5rem',
-      }}>
-        <div style={styles.cardHeader || {
-          padding: '1rem',
-          borderBottom: `1px solid ${colors.gray[200]}`
-        }}>
-          <h3 style={styles.cardTitle || { fontSize: '1rem', fontWeight: 600, margin: 0 }}>All Employee Trips</h3>
+      <div style={styles.sectionCard}>
+        <div style={styles.sectionTitle}>
+          <h2 style={styles.sectionHeading}>All Employee Trips</h2>
         </div>
         
         <div 
+          className={scrollbarStyles.scrollable}
           ref={employeeTripsScrollRef}
           style={{
-            maxHeight: '400px',
-            overflow: 'auto',
-            borderRadius: '0.5rem',
-            border: `1px solid ${colors.gray[200]}`
+            ...styles.scrollable,
+            maxHeight: '300px',
+            overflow: 'auto'
           }}
         >
-          {sortedTrips.length === 0 ? (
-            <div style={styles.emptyState || {
-              padding: '2rem', 
-              textAlign: 'center' as const,
-              color: colors.gray[500]
-            }}>
-              <p>No trip data available yet</p>
-            </div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' as const, fontSize: '0.875rem' }}>
-              <thead>
+          {sortedTrips.length > 0 ? (
+            <table style={styles.table}>
+              <thead style={styles.tableHeader}>
                 <tr>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Employee
-                  </th>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Date
-                  </th>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Transport
-                  </th>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Distance
-                  </th>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Route
-                  </th>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Credits
-                  </th>
-                  <th style={{ 
-                    textAlign: 'left' as const, 
-                    padding: '0.75rem 1rem', 
-                    backgroundColor: colors.gray[50], 
-                    borderBottom: `1px solid ${colors.gray[200]}`,
-                    color: colors.gray[700],
-                    fontWeight: 600
-                  }}>
-                    Status
-                  </th>
+                  <th style={styles.tableHeaderCell}>Employee</th>
+                  <th style={styles.tableHeaderCell}>Date</th>
+                  <th style={styles.tableHeaderCell}>Transport</th>
+                  <th style={styles.tableHeaderCell}>Distance (km)</th>
+                  <th style={styles.tableHeaderCell}>Route</th>
+                  <th style={styles.tableHeaderCell}>Credits</th>
+                  <th style={styles.tableHeaderCell}>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedTrips.map((trip, index) => (
-                  <tr key={trip.id || index} style={{ 
-                    backgroundColor: index % 2 === 0 ? colors.white : colors.gray[50]
-                  }}>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`,
-                      color: colors.gray[900]
-                    }}>
-                      {employeesMap[trip.userId] || 'Unknown'}
-                    </td>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`,
-                      color: colors.gray[900]
-                    }}>
-                      {trip.tripDate ? new Date(trip.tripDate).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`,
-                      color: colors.gray[900]
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span style={{
-                          display: 'inline-block',
-                          width: '0.75rem',
-                          height: '0.75rem',
-                          borderRadius: '9999px',
-                          backgroundColor: trip.transportMode === 'walking' ? colors.green[500] : 
-                                          trip.transportMode === 'cycling' ? colors.green[600] :
-                                          trip.transportMode === 'publicTransport' ? colors.green[700] :
-                                          trip.transportMode === 'rideShare' ? colors.green[300] :
-                                          trip.transportMode === 'ownVehicle' ? colors.red[400] :
-                                          colors.gray[500]
-                        }} />
-                        {trip.transportMode ? trip.transportMode.charAt(0).toUpperCase() + trip.transportMode.slice(1).replace('_', ' ') : 'N/A'}
-                      </div>
-                    </td>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`,
-                      color: colors.gray[900]
-                    }}>
-                      {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : 'N/A'}
-                    </td>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`,
-                      color: colors.gray[900]
-                    }}>
-                      {trip.startAddress && trip.endAddress ? 
+                {sortedTrips.map((trip, index) => {
+                  const employee = employees.find(emp => emp.id === trip.userId);
+                  return (
+                    <tr key={trip.id} style={index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd}>
+                      <td style={styles.tableCell}>{employee?.name || 'Unknown'}</td>
+                      <td style={styles.tableCell}>{new Date(trip.tripDate).toLocaleDateString()}</td>
+                      <td style={styles.tableCell}>{trip.transportMode}</td>
+                      <td style={styles.tableCell}>{trip.distanceKm.toFixed(2)}</td>
+                      <td style={styles.tableCell}>{trip.startAddress && trip.endAddress ? 
                         `${trip.startAddress.substring(0, 15)}... → ${trip.endAddress.substring(0, 15)}...` : 
-                        'N/A'}
-                    </td>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`,
-                      color: colors.gray[900],
-                      fontWeight: 600
-                    }}>
-                      {trip.carbonCredits ? 
-                        <span style={{ color: colors.green[600] }}>+{trip.carbonCredits.toFixed(2)}</span> : 
-                        'N/A'}
-                    </td>
-                    <td style={{ 
-                      padding: '0.75rem 1rem', 
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>
-                      {/* Trip status indicator */}
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        backgroundColor: trip.rejected ? colors.red[100] : colors.green[100],
-                        color: trip.rejected ? colors.red[800] : colors.green[800],
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
+                        'N/A'}</td>
+                      <td style={styles.tableCell}>{trip.carbonCredits.toFixed(2)}</td>
+                      <td style={{
+                        ...styles.tableCell,
+                        color: trip.rejected ? colors.red[500] : colors.green[600]
                       }}>
-                        {trip.rejected ? (
-                          <>
-                            <XCircleIcon style={{ width: '16px', height: '16px' }} />
-                            <span>Rejected</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircleIcon style={{ width: '16px', height: '16px' }} />
-                            <span>Verified</span>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        {trip.rejected ? 'Rejected' : 'Verified'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          ) : (
+            <div style={styles.emptyState}>
+              <p>No employee trips found.</p>
+            </div>
           )}
         </div>
       </div>
@@ -1472,6 +1296,9 @@ const EmployerDashboard: React.FC = () => {
 
   // Fix the employee list section to ensure proper layout and style
   const EmployeeListSection = () => {
+    // Use the scroll preservation hook
+    useScrollPreservation(employeeListScrollRef);
+    
     // Helper function to get medal for top ranks
     const getRankDisplay = (index: number) => {
       if (index === 0) { // First place (Gold)
@@ -1549,391 +1376,79 @@ const EmployerDashboard: React.FC = () => {
     };
 
     return (
-      <div style={{
-        ...styles.card,
-        marginBottom: '1.5rem',
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '1rem',
-          borderBottom: `1px solid ${colors.gray[200]}`
-        }}>
-          <h3 style={{
-            ...styles.cardTitle || { fontSize: '1rem', fontWeight: 600, margin: 0 },
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem'
-          }}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={colors.green[600]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-            </svg>
-            Employee Leaderboard
-          </h3>
-          
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.75rem',
-            maxWidth: '20rem',
-            width: '100%' 
-          }}>
-            <button
-              onClick={refreshEmployeeCredits}
+      <div style={styles.sectionCard}>
+        <div style={styles.sectionTitle}>
+          <h2 style={styles.sectionHeading}>Employees</h2>
+          <div style={styles.searchContainer}>
+            <input
+              type="text"
+              placeholder="Search employees..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setIsSearchFocused(false)}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.25rem',
-                padding: '0.5rem 0.75rem',
-                backgroundColor: colors.green[50],
-                color: colors.green[700],
-                border: 'none',
-                borderRadius: '0.375rem',
-                fontSize: '0.75rem',
-                fontWeight: 500,
-                cursor: 'pointer',
-                transition: 'all 0.2s ease'
+                ...styles.searchInput,
+                borderColor: isSearchFocused ? colors.blue[500] : colors.gray[300],
               }}
-              title="Refresh credits from trips data"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 2v6h6"></path>
-                <path d="M3 13a9 9 0 1 0 3-7.7L3 8"></path>
-              </svg>
-              Refresh Credits
-            </button>
-            <div style={{
-              position: 'relative',
-              width: '100%'
-            }}>
-              <input
-                type="text"
-                placeholder="Search employees..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setIsSearchFocused(false)}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem 0.75rem',
-                  paddingLeft: '2rem',
-                  borderRadius: '0.375rem',
-                  border: `1px solid ${isSearchFocused ? colors.green[500] : colors.gray[300]}`,
-                  outline: 'none',
-                  fontSize: '0.875rem',
-                  boxShadow: isSearchFocused ? `0 0 0 2px ${colors.green[200]}` : 'none',
-                  transition: 'all 0.2s'
-                }}
-              />
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={colors.gray[400]}
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{
-                  position: 'absolute',
-                  left: '0.75rem',
-                  top: '50%',
-                  transform: 'translateY(-50%)'
-                }}
-              >
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-              </svg>
-            </div>
+            />
           </div>
         </div>
         
         <div 
+          className={scrollbarStyles.scrollable}
           ref={employeeListScrollRef}
           style={{
-            maxHeight: '400px',
-            overflow: 'auto',
+            ...styles.scrollable,
+            maxHeight: '300px',
+            overflow: 'auto'
           }}
         >
-          {filteredEmps.length === 0 ? (
-            <div style={styles.emptyState || {
-              padding: '2rem', 
-              textAlign: 'center' as const,
-              color: colors.gray[500]
-            }}>
-              <p>No employees found</p>
-            </div>
-          ) : (
-            <table style={styles.table || {
-              width: '100%',
-              borderCollapse: 'collapse' as const
-            }}>
-              <thead>
+          {filteredEmps.length > 0 ? (
+            <table style={styles.table}>
+              <thead style={styles.tableHeader}>
                 <tr>
-                  <th style={{
-                    ...(styles.tableHeader || {
-                      textAlign: 'left' as const,
-                      padding: '0.75rem 1rem',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }),
-                    width: '4rem',
-                    textAlign: 'center' as const
-                  }}>Rank</th>
-                  <th style={styles.tableHeader || {
-                    textAlign: 'left' as const,
-                    padding: '0.75rem 1rem',
-                    fontSize: '0.875rem',
-                    fontWeight: 600,
-                    color: colors.gray[700],
-                    borderBottom: `1px solid ${colors.gray[200]}`
-                  }}>Employee</th>
-                  <th style={{
-                    ...(styles.tableHeader || {
-                      textAlign: 'left' as const,
-                      padding: '0.75rem 1rem',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }),
-                    textAlign: 'center' as const,
-                    color: colors.green[700]
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 8c-2.2 0-4 1.8-4 4s1.8 4 4 4 4-1.8 4-4-1.8-4-4-4z"></path>
-                        <path d="M12 2c-4.4 0-8 3.6-8 8 0 1.4.4 2.8 1 4l7 7 7-7c.6-1.2 1-2.6 1-4 0-4.4-3.6-8-8-8z"></path>
-                      </svg>
-                      Carbon Credits
-                    </div>
-                  </th>
-                  <th style={styles.tableHeader || {
-                    textAlign: 'left' as const,
-                    padding: '0.75rem 1rem',
-                    fontSize: '0.875rem',
-                    fontWeight: 600,
-                    color: colors.gray[700],
-                    borderBottom: `1px solid ${colors.gray[200]}`
-                  }}>Actions</th>
+                  <th style={styles.tableHeaderCell}>Rank</th>
+                  <th style={styles.tableHeaderCell}>Name</th>
+                  <th style={styles.tableHeaderCell}>Email</th>
+                  <th style={styles.tableHeaderCell}>Carbon Credits</th>
+                  <th style={styles.tableHeaderCell}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredEmps.map((employee, index) => {
-                  // Determine background color based on position
-                  const isTopThree = index < 3;
-                  const rowBackground = isTopThree 
-                    ? index === 0 
-                      ? 'rgba(255, 215, 0, 0.05)' 
-                      : index === 1 
-                        ? 'rgba(192, 192, 192, 0.05)' 
-                        : 'rgba(205, 127, 50, 0.05)'
-                    : '';
-                  
-                  return (
-                    <tr 
-                      key={employee.id} 
-                      style={{
-                        ...(styles.tableRow || {
-                          borderBottom: `1px solid ${colors.gray[100]}`
-                        }),
-                        ...(employee.status === 'inactive' || employee.approved === false ? {
-                          backgroundColor: colors.gray[50],
-                          color: colors.gray[500]
-                        } : { backgroundColor: rowBackground }),
-                        transition: 'background-color 0.3s'
-                      }}
-                    >
-                      <td style={{
-                        ...(styles.tableCell || {
-                          padding: '0.75rem 1rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800]
-                        }),
-                        textAlign: 'center',
-                        padding: '1rem 0.5rem'
-                      }}>
-                        {getRankDisplay(index)}
-                      </td>
-                      <td style={styles.tableCell || {
-                        padding: '0.75rem 1rem',
-                        fontSize: '0.875rem',
-                        color: colors.gray[800]
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <div style={{ 
-                            width: '2.5rem',
-                            height: '2.5rem',
-                            borderRadius: '50%',
-                            backgroundColor: employee.status === 'inactive' || employee.approved === false ? colors.gray[200] : colors.green[100],
-                            color: employee.status === 'inactive' || employee.approved === false ? colors.gray[500] : colors.green[700],
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontWeight: 600,
-                            fontSize: '1rem'
-                          }}>
-                            {employee.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <p style={{ 
-                              margin: 0, 
-                              fontWeight: 500, 
-                              fontSize: '0.9rem',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.5rem'
-                            }}>
-                              {employee.name}
-                              {(employee.status === 'inactive' || employee.approved === false) && (
-                                <span style={{
-                                  fontSize: '0.7rem',
-                                  fontWeight: 400,
-                                  color: colors.white,
-                                  backgroundColor: colors.red[500],
-                                  padding: '0.125rem 0.375rem',
-                                  borderRadius: '0.25rem',
-                                  display: 'inline-block',
-                                  textTransform: 'uppercase',
-                                  lineHeight: 1
-                                }}>
-                                  Deactivated
-                                </span>
-                              )}
-                            </p>
-                            <p style={{ margin: 0, fontSize: '0.75rem', color: colors.gray[500] }}>
-                              {employee.email}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{
-                        ...(styles.tableCell || {
-                          padding: '0.75rem 1rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800]
-                        }),
-                        textAlign: 'center',
-                        padding: '0.75rem'
-                      }}>
-                        <div style={{
-                          display: 'inline-flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          padding: '0.5rem 0.75rem',
-                          background: isTopThree 
-                            ? index === 0 
-                              ? 'rgba(255, 215, 0, 0.1)' 
-                              : index === 1 
-                                ? 'rgba(192, 192, 192, 0.1)' 
-                                : 'rgba(205, 127, 50, 0.1)'
-                            : colors.green[50],
-                          borderRadius: '0.375rem',
-                          minWidth: '5rem'
-                        }}>
-                          <span style={{ 
-                            fontSize: '1.125rem', 
-                            fontWeight: 700, 
-                            color: isTopThree 
-                              ? index === 0 
-                                ? 'rgb(184, 134, 11)' 
-                                : index === 1 
-                                  ? 'rgb(80, 80, 80)' 
-                                  : 'rgb(140, 62, 15)'
-                              : colors.green[700]
-                          }}>
-                            {employee.calculatedCredits?.toFixed(2) || '0.00'}
-                          </span>
-                          <span style={{ 
-                            fontSize: '0.7rem', 
-                            fontWeight: 500, 
-                            color: colors.gray[600],
-                            marginTop: '0.125rem'
-                          }}>
-                            CREDITS EARNED
-                          </span>
-                        </div>
-                      </td>
-                      <td style={styles.tableCell || {
-                        padding: '0.75rem 1rem',
-                        fontSize: '0.875rem',
-                        color: colors.gray[800]
-                      }}>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button
-                            onClick={() => handleViewEmployeeCredits(employee)}
-                            style={{
-                              ...styles.textButton,
-                              backgroundColor: colors.green[50],
-                              color: colors.green[700],
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.25rem'
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.backgroundColor = colors.green[100];
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.backgroundColor = colors.green[50];
-                            }}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <circle cx="12" cy="12" r="10"></circle>
-                              <line x1="12" y1="16" x2="12" y2="12"></line>
-                              <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                            </svg>
-                            View Details
-                          </button>
-                          
-                          {employee.status !== 'inactive' && employee.approved !== false && (
-                            <button
-                              onClick={() => {
-                                setEmployeeToDelete(employee);
-                                setShowDeleteModal(true);
-                              }}
-                              style={{
-                                backgroundColor: 'transparent',
-                                border: 'none',
-                                color: colors.red[600],
-                                cursor: 'pointer',
-                                padding: '0.25rem 0.5rem',
-                                borderRadius: '0.25rem',
-                                fontSize: '0.75rem',
-                                fontWeight: 500,
-                                transition: 'background-color 0.2s ease',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.25rem'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = colors.red[50];
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = 'transparent';
-                              }}
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M3 6h18"></path>
-                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                <line x1="14" y1="11" x2="14" y2="17"></line>
-                              </svg>
-                              Deactivate
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {filteredEmps.map((employee, index) => (
+                  <tr key={employee.id} style={index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd}>
+                    <td style={styles.tableCell}>{getRankDisplay(index)}</td>
+                    <td style={styles.tableCell}>{employee.name}</td>
+                    <td style={styles.tableCell}>{employee.email}</td>
+                    <td style={styles.tableCell}>{(employee.calculatedCredits || employee.carbonCredits || 0).toFixed(2)}</td>
+                    <td style={styles.tableCell}>
+                      <div style={styles.actionButtons}>
+                        <button
+                          onClick={() => handleViewEmployeeCredits(employee)}
+                          style={styles.viewButton}
+                        >
+                          View Credits
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEmployeeToDelete(employee);
+                            setShowDeleteModal(true);
+                          }}
+                          style={styles.deleteButton}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
+          ) : (
+            <div style={styles.emptyState}>
+              <p>No employees found.</p>
+            </div>
           )}
         </div>
       </div>
@@ -2148,254 +1663,99 @@ const EmployerDashboard: React.FC = () => {
 
   // Add a new component to display transaction history
   const TransactionHistorySection = () => {
-    // Function to handle manual refresh
+    // Use the scroll preservation hook
+    useScrollPreservation(transactionHistoryScrollRef);
+    
     const handleRefresh = () => {
-      if (currentOrganization) {
-        // Store current scroll position before refresh
-        preserveScrollPosition(transactionHistoryScrollRef);
-        
-        // Fetch new data with force refresh
+      if (currentOrganization?.id) {
         fetchTransactionHistory(currentOrganization.id, true);
       }
     };
-    
+
     return (
-      <>
-        <div style={styles.sectionTitle || { 
-          display: 'flex', 
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1rem'
-        }}>
-          <h3 style={{ margin: 0 }}>Transaction History</h3>
+      <div style={styles.sectionCard}>
+        <div style={styles.sectionTitle}>
+          <h2 style={styles.sectionHeading}>Transaction History</h2>
           <button
             onClick={handleRefresh}
             style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: colors.blue[600],
               display: 'flex',
               alignItems: 'center',
-              gap: '0.375rem',
-              padding: '0.5rem 0.75rem',
-              backgroundColor: 'white',
-              color: colors.gray[700],
-              border: `1px solid ${colors.gray[300]}`,
-              borderRadius: '0.375rem',
-              fontSize: '0.75rem',
-              fontWeight: 500,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
+              gap: '0.25rem',
+              fontSize: '0.875rem'
             }}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 2v6h6"></path>
-              <path d="M3 13a9 9 0 1 0 3-7.7L3 8"></path>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 2v6h-6"></path>
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+              <path d="M3 22v-6h6"></path>
+              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
             </svg>
             Refresh
           </button>
         </div>
         
-        <div style={{
-          ...styles.card,
-          marginBottom: '1.5rem'
-        }}>
-          {isLoadingTransactions ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-spin">
-                <circle cx="12" cy="12" r="10" stroke={colors.gray[300]} strokeWidth="4" />
-                <path d="M12 2C6.47715 2 2 6.47715 2 12" stroke={colors.green[500]} strokeWidth="4" />
-              </svg>
-            </div>
-          ) : transactions.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '2rem' }}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={colors.gray[400]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '0.75rem' }}>
-                <rect x="2" y="5" width="20" height="14" rx="2" />
-                <line x1="2" y1="10" x2="22" y2="10" />
-              </svg>
-              <p style={{ margin: 0, color: colors.gray[600] }}>No transactions found</p>
-              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.875rem', color: colors.gray[500] }}>
-                Buy or sell credits to start tracking your transactions
-              </p>
-            </div>
-          ) : (
-            <div 
-              ref={transactionHistoryScrollRef}
-              style={{ 
-                overflow: 'auto', 
-                maxHeight: '300px',
-                padding: '0.25rem'
-              }} 
-              className={`${scrollbarStyles.scrollable} ${scrollbarStyles.scrollbarCustom}`}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
+        {isLoadingTransactions ? (
+          <div style={styles.loadingContainer}>
+            <div style={styles.loadingSpinner} />
+            <p>Loading transactions...</p>
+          </div>
+        ) : (
+          <div 
+            className={scrollbarStyles.scrollable}
+            ref={transactionHistoryScrollRef}
+            style={{
+              ...styles.scrollable,
+              maxHeight: '300px',
+              overflow: 'auto'
+            }}
+          >
+            {transactions.length > 0 ? (
+              <table style={styles.table}>
+                <thead style={styles.tableHeader}>
                   <tr>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'left',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Date</th>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'left',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Type</th>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'left',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Organization</th>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'right',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Credits</th>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'right',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Price</th>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'right',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Total</th>
-                    <th style={{
-                      padding: '0.75rem',
-                      textAlign: 'center',
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                      color: colors.gray[700],
-                      borderBottom: `1px solid ${colors.gray[200]}`
-                    }}>Status</th>
+                    <th style={styles.tableHeaderCell}>Date</th>
+                    <th style={styles.tableHeaderCell}>Type</th>
+                    <th style={styles.tableHeaderCell}>Credits</th>
+                    <th style={styles.tableHeaderCell}>Price/Credit</th>
+                    <th style={styles.tableHeaderCell}>Total</th>
+                    <th style={styles.tableHeaderCell}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((transaction) => {
-                    const isBuyer = transaction.buyerOrgId === currentOrganization?.id;
-                    const counterpartyName = isBuyer ? transaction.sellerOrgName : transaction.buyerOrgName;
-                    
-                    return (
-                      <tr key={transaction.id}>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800],
-                          borderBottom: `1px solid ${colors.gray[200]}`
-                        }}>
-                          {transaction.createdAt instanceof Date 
-                            ? transaction.createdAt.toLocaleDateString() 
-                            : typeof transaction.createdAt === 'string'
-                              ? new Date(transaction.createdAt).toLocaleDateString()
-                              : 'N/A'}
-                        </td>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800],
-                          borderBottom: `1px solid ${colors.gray[200]}`
-                        }}>
-                          <div style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '0.375rem'
-                          }}>
-                            <div style={{ 
-                              width: '0.5rem', 
-                              height: '0.5rem', 
-                              borderRadius: '50%', 
-                              backgroundColor: isBuyer ? colors.green[500] : colors.gray[500] 
-                            }} />
-                            {isBuyer ? 'Buy' : 'Sell'}
-                          </div>
-                        </td>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800],
-                          borderBottom: `1px solid ${colors.gray[200]}`
-                        }}>
-                          {counterpartyName}
-                        </td>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800],
-                          borderBottom: `1px solid ${colors.gray[200]}`,
-                          textAlign: 'right',
-                          fontWeight: 500
-                        }}>
-                          {transaction.creditAmount.toFixed(2)}
-                        </td>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800],
-                          borderBottom: `1px solid ${colors.gray[200]}`,
-                          textAlign: 'right'
-                        }}>
-                          ${transaction.price.toFixed(2)}
-                        </td>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.875rem',
-                          color: colors.gray[800],
-                          borderBottom: `1px solid ${colors.gray[200]}`,
-                          textAlign: 'right',
-                          fontWeight: 600
-                        }}>
-                          ${(transaction.creditAmount * transaction.price).toFixed(2)}
-                        </td>
-                        <td style={{
-                          padding: '0.75rem',
-                          fontSize: '0.75rem',
-                          borderBottom: `1px solid ${colors.gray[200]}`,
-                          textAlign: 'center'
-                        }}>
-                          <span style={{
-                            display: 'inline-block',
-                            padding: '0.25rem 0.5rem',
-                            borderRadius: '1rem',
-                            backgroundColor: 
-                              transaction.status === 'completed' ? colors.green[50] :
-                              transaction.status === 'approved' ? colors.green[50] :
-                              transaction.status === 'pending' ? colors.gray[100] :
-                              colors.red[50],
-                            color: 
-                              transaction.status === 'completed' ? colors.green[700] :
-                              transaction.status === 'approved' ? colors.green[700] :
-                              transaction.status === 'pending' ? colors.gray[700] :
-                              colors.red[700],
-                            textTransform: 'capitalize' as const
-                          }}>
-                            {transaction.status}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {transactions.map((transaction, index) => (
+                    <tr key={transaction.id || index} style={index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd}>
+                      <td style={styles.tableCell}>{new Date(transaction.createdAt.seconds * 1000).toLocaleDateString()}</td>
+                      <td style={styles.tableCell}>{transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1)}</td>
+                      <td style={styles.tableCell}>{transaction.creditAmount.toFixed(2)}</td>
+                      <td style={styles.tableCell}>${transaction.pricePerCredit.toFixed(2)}</td>
+                      <td style={styles.tableCell}>${(transaction.creditAmount * transaction.pricePerCredit).toFixed(2)}</td>
+                      <td style={{
+                        ...styles.tableCell,
+                        color: transaction.status === 'completed' 
+                          ? colors.green[600] 
+                          : transaction.status === 'pending' 
+                            ? colors.orange[500] 
+                            : colors.red[500]
+                      }}>
+                        {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-      </>
+            ) : (
+              <div style={styles.emptyState}>
+                <p>No transaction history found.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -2406,8 +1766,8 @@ const EmployerDashboard: React.FC = () => {
     // Function to handle manual refresh of available sales
     const handleRefreshSales = () => {
       if (currentOrganization) {
-        // Store current scroll position before refresh
-        preserveScrollPosition(availableSalesScrollRef);
+        // Use type assertion to fix TypeScript error
+        preserveScrollPosition(availableSalesScrollRef as React.RefObject<HTMLDivElement>);
         
         // Force refresh of sales data
         fetchAvailableSales(true);
@@ -2871,329 +2231,358 @@ const EmployerDashboard: React.FC = () => {
           </div>
         </div>
       </div>
-    );
-  };
+    </>
+  );
+};
 
-  // Helper function to preserve scroll position
-  const preserveScrollPosition = (ref: React.RefObject<HTMLDivElement>) => {
+// Helper function to preserve scroll position
+const preserveScrollPosition = (ref: React.RefObject<HTMLDivElement>) => {
+  if (!ref.current) return;
+  const scrollPosition = ref.current.scrollTop;
+  
+  // Use requestAnimationFrame to restore scroll position after re-render
+  requestAnimationFrame(() => {
     if (ref.current) {
-      const scrollTop = ref.current.scrollTop;
-      setTimeout(() => {
-        if (ref.current) {
-          ref.current.scrollTop = scrollTop;
-        }
-      }, 0);
+      ref.current.scrollTop = scrollPosition;
     }
-  };
+  });
+};
 
-  // Update the refreshEmployeeCredits function to reset calculation refs
-  const refreshEmployeeCredits = async () => {
-    if (!currentOrganization || employees.length === 0) return;
+// Add scroll preservation hook
+const useScrollPreservation = (elementRef: React.RefObject<HTMLDivElement>) => {
+  const [scrollPosition, setScrollPosition] = useState(0);
+  
+  useEffect(() => {
+    const element = elementRef.current;
+    if (element) {
+      // Restore scroll position if we have one saved
+      if (scrollPosition > 0) {
+        element.scrollTop = scrollPosition;
+      }
+      
+      // Save scroll position when user scrolls
+      const handleScroll = () => {
+        setScrollPosition(element.scrollTop);
+      };
+      
+      element.addEventListener('scroll', handleScroll);
+      return () => element.removeEventListener('scroll', handleScroll);
+    }
+  }, [elementRef, scrollPosition]);
+  
+  return scrollPosition;
+};
+
+// Update the refreshEmployeeCredits function to properly handle refresh
+const refreshEmployeeCredits = async () => {
+  if (!currentOrganization || employees.length === 0) return;
+  
+  try {
+    showToast('Refreshing employee credits...', 'info');
     
-    try {
-      showToast('Refreshing employee credits...', 'info');
-      
-      // Reset calculation refs to force a fresh calculation
-      creditsCalculatedRef.current = false;
-      
-      // Get all employee IDs
-      const employeeIds = employees.map(emp => emp.id);
-      
-      // Re-fetch trips to ensure we have the latest data
-      await fetchEmployeeTrips(employeeIds);
-      
-      // Recalculate org totals
-      await calculateTotalOrgCredits(currentOrganization.id, employeeIds);
-      
-      showToast('Employee credits updated successfully', 'success');
-    } catch (error) {
-      console.error("Error refreshing employee credits:", error);
-      showToast('Failed to refresh employee credits', 'error');
-    }
-  };
+    // Reset the trips loaded flag to force a refresh
+    dataLoadedRef.current.trips = false;
+    
+    // Get all employee IDs
+    const employeeIds = employees.map(emp => emp.id);
+    
+    // Re-fetch trips to ensure we have the latest data
+    await fetchEmployeeTrips(employeeIds, true);
+    
+    // Recalculate org totals
+    await calculateTotalOrgCredits(currentOrganization.id, employeeIds);
+    
+    showToast('Employee credits updated successfully', 'success');
+  } catch (error) {
+    console.error("Error refreshing employee credits:", error);
+    showToast('Failed to refresh employee credits', 'error');
+  }
+};
 
-  // Update the main return function to use the EmployeeListSection component
-  return (
-    <>
-      <div style={styles.container}>
-        <Header userData={userData} showSearch={false} />
+// Update the main return function to use the EmployeeListSection component
+return (
+  <>
+    <div style={styles.container}>
+      <Header userData={userData} showSearch={false} />
+      
+      <div style={styles.mainContent}>
+        <div style={styles.contentArea}>
         
-        <div style={styles.mainContent}>
-          <div style={styles.contentArea}>
-          
-            {loading ? (
-              <div style={styles.loadingContainer}>
-                <div style={styles.loadingSpinner} />
-                <p style={styles.loadingText}>Loading dashboard...</p>
+          {loading ? (
+            <div style={styles.loadingContainer}>
+              <div style={styles.loadingSpinner} />
+              <p style={styles.loadingText}>Loading dashboard...</p>
+            </div>
+          ) : currentOrganization ? (
+            <div style={styles.dashboardContainer}>
+              <div style={styles.statsRow}>
+                <div style={styles.statsCard}>
+                  <h4 style={styles.statsTitle}>Organization Domain</h4>
+                  <p style={styles.statsValue}>{currentOrganization.domain}</p>
+                </div>
+                <div style={styles.statsCard}>
+                  <h4 style={styles.statsTitle}>Total Employees</h4>
+                  <p style={styles.statsValue}>{employees.length}</p>
+                </div>
+                <div style={styles.statsCard} title="Credits earned by employees through sustainable commuting">
+                  <h4 style={styles.statsTitle}>Employee Earned Credits</h4>
+                  <p style={styles.statsValue}>{employeeEarnedCredits.toFixed(2)}</p>
+                  <p style={{ 
+                    fontSize: '0.75rem', 
+                    color: colors.gray[500], 
+                    margin: '0.25rem 0 0 0' 
+                  }}>
+                    Earned through commuting
+                  </p>
+                </div>
+                <div style={styles.statsCard} title="Total credits available = Employee earned + Purchased - Sold">
+                  <h4 style={styles.statsTitle}>Available Credits</h4>
+                  <p style={styles.statsValue}>{totalOrgCredits.toFixed(2)}</p>
+                  <p style={{ 
+                    fontSize: '0.75rem', 
+                    color: colors.gray[500], 
+                    margin: '0.25rem 0 0 0' 
+                  }}>
+                    Available for trading
+                  </p>
+                </div>
               </div>
-            ) : currentOrganization ? (
-              <div style={styles.dashboardContainer}>
-                <div style={styles.statsRow}>
-                  <div style={styles.statsCard}>
-                    <h4 style={styles.statsTitle}>Organization Domain</h4>
-                    <p style={styles.statsValue}>{currentOrganization.domain}</p>
-                  </div>
-                  <div style={styles.statsCard}>
-                    <h4 style={styles.statsTitle}>Total Employees</h4>
-                    <p style={styles.statsValue}>{employees.length}</p>
-                  </div>
-                  <div style={styles.statsCard} title="Credits earned by employees through sustainable commuting">
-                    <h4 style={styles.statsTitle}>Employee Earned Credits</h4>
-                    <p style={styles.statsValue}>{employeeEarnedCredits.toFixed(2)}</p>
-                    <p style={{ 
-                      fontSize: '0.75rem', 
-                      color: colors.gray[500], 
-                      margin: '0.25rem 0 0 0' 
-                    }}>
-                      Earned through commuting
-                    </p>
-                  </div>
-                  <div style={styles.statsCard} title="Total credits available = Employee earned + Purchased - Sold">
-                    <h4 style={styles.statsTitle}>Available Credits</h4>
-                    <p style={styles.statsValue}>{totalOrgCredits.toFixed(2)}</p>
-                    <p style={{ 
-                      fontSize: '0.75rem', 
-                      color: colors.gray[500], 
-                      margin: '0.25rem 0 0 0' 
-                    }}>
-                      Available for trading
-                    </p>
-                  </div>
+              
+              <div style={styles.dashboardGrid}>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <CreditBreakdownCard />
                 </div>
-                
-                <div style={styles.dashboardGrid}>
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <CreditBreakdownCard />
-                  </div>
-                </div>
-                
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: '1.5rem'
-                }}>
-                  <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.gray[800] }}>
-                    Carbon Credit Management
-                  </h2>
-                  <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <button
-                      onClick={() => {
-                        setTransactionType('buy');
-                        setShowTransactionModal(true);
-                        fetchAvailableSales();
-                      }}
-                      style={{
-                        backgroundColor: transactionType === 'buy' ? colors.green[600] : 'white',
-                        color: transactionType === 'buy' ? 'white' : colors.gray[800],
-                        border: `1px solid ${colors.green[600]}`,
-                        borderRadius: '0.375rem',
-                        padding: '0.5rem 1rem',
-                        fontSize: '0.875rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem'
-                      }}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="8" x2="12" y2="16"></line>
-                        <line x1="8" y1="12" x2="16" y2="12"></line>
-                      </svg>
-                      Buy Credits
-                    </button>
-                    <button
-                      onClick={() => {
-                        setTransactionType('sell');
-                        setShowTransactionModal(true);
-                      }}
-                      style={{
-                        backgroundColor: transactionType === 'sell' ? colors.green[600] : 'white',
-                        color: transactionType === 'sell' ? 'white' : colors.gray[800],
-                        border: `1px solid ${colors.green[600]}`,
-                        borderRadius: '0.375rem',
-                        padding: '0.5rem 1rem',
-                        fontSize: '0.875rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem'
-                      }}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <polyline points="8 12 12 16 16 12"></polyline>
-                        <line x1="12" y1="8" x2="12" y2="16"></line>
-                      </svg>
-                      Sell Credits
-                    </button>
-                  </div>
-                </div>
-                
-                {/* Employee list section */}
-                <EmployeeListSection />
-                
-                {/* Transaction history section */}
-                <TransactionHistorySection />
-                
-                {/* All trips table */}
-                <AllEmployeeTripsTable />
-                
-                {/* Pending employees section */}
-                {pendingEmployees.length > 0 && (
-                  <>
-                    <div style={styles.sectionTitle || { 
-                      display: 'flex', 
-                      justifyContent: 'space-between',
+              </div>
+              
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '1.5rem'
+              }}>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.gray[800] }}>
+                  Carbon Credit Management
+                </h2>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <button
+                    onClick={() => {
+                      setTransactionType('buy');
+                      setShowTransactionModal(true);
+                      fetchAvailableSales();
+                    }}
+                    style={{
+                      backgroundColor: transactionType === 'buy' ? colors.green[600] : 'white',
+                      color: transactionType === 'buy' ? 'white' : colors.gray[800],
+                      border: `1px solid ${colors.green[600]}`,
+                      borderRadius: '0.375rem',
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.875rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      display: 'flex',
                       alignItems: 'center',
-                      marginBottom: '1rem'
-                    }}>
-                      <h3 style={{ margin: 0 }}>Pending Employee Approvals</h3>
-                    </div>
-                    
-                    <div style={{
-                      ...styles.card,
-                      marginBottom: '1.5rem'
-                    }}>
-                      <div 
-                        ref={pendingEmployeesScrollRef}
-                        style={{ 
-                          overflow: 'auto', 
-                          maxHeight: '300px',
-                          padding: '0.25rem'
-                        }} 
-                        className={`${scrollbarStyles.scrollable} ${scrollbarStyles.scrollbarCustom}`}
-                      >
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <thead>
-                            <tr>
-                              <th style={{
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="16"></line>
+                      <line x1="8" y1="12" x2="16" y2="12"></line>
+                    </svg>
+                    Buy Credits
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTransactionType('sell');
+                      setShowTransactionModal(true);
+                    }}
+                    style={{
+                      backgroundColor: transactionType === 'sell' ? colors.green[600] : 'white',
+                      color: transactionType === 'sell' ? 'white' : colors.gray[800],
+                      border: `1px solid ${colors.green[600]}`,
+                      borderRadius: '0.375rem',
+                      padding: '0.5rem 1rem',
+                      fontSize: '0.875rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <polyline points="8 12 12 16 16 12"></polyline>
+                      <line x1="12" y1="8" x2="12" y2="16"></line>
+                    </svg>
+                    Sell Credits
+                  </button>
+                </div>
+              </div>
+              
+              {/* Employee list section */}
+              <EmployeeListSection />
+              
+              {/* Transaction history section */}
+              <TransactionHistorySection />
+              
+              {/* All trips table */}
+              <AllEmployeeTripsTable />
+              
+              {/* Pending employees section */}
+              {pendingEmployees.length > 0 && (
+                <>
+                  <div style={styles.sectionTitle || { 
+                    display: 'flex', 
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '1rem'
+                  }}>
+                    <h3 style={{ margin: 0 }}>Pending Employee Approvals</h3>
+                  </div>
+                  
+                  <div style={{
+                    ...styles.card,
+                    marginBottom: '1.5rem'
+                  }}>
+                    <div 
+                      ref={pendingEmployeesScrollRef}
+                      style={{ 
+                        overflow: 'auto', 
+                        maxHeight: '300px',
+                        padding: '0.25rem'
+                      }} 
+                      className={`${scrollbarStyles.scrollable} ${scrollbarStyles.scrollbarCustom}`}
+                    >
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{
+                              padding: '0.75rem',
+                              textAlign: 'left',
+                              fontSize: '0.875rem',
+                              fontWeight: 600,
+                              color: colors.gray[700],
+                              borderBottom: `1px solid ${colors.gray[200]}`
+                            }}>Name</th>
+                            <th style={{
+                              padding: '0.75rem',
+                              textAlign: 'left',
+                              fontSize: '0.875rem',
+                              fontWeight: 600,
+                              color: colors.gray[700],
+                              borderBottom: `1px solid ${colors.gray[200]}`
+                            }}>Email</th>
+                            <th style={{
+                              padding: '0.75rem',
+                              textAlign: 'left',
+                              fontSize: '0.875rem',
+                              fontWeight: 600,
+                              color: colors.gray[700],
+                              borderBottom: `1px solid ${colors.gray[200]}`
+                            }}>Request Date</th>
+                            <th style={{
+                              padding: '0.75rem',
+                              textAlign: 'right',
+                              fontSize: '0.875rem',
+                              fontWeight: 600,
+                              color: colors.gray[700],
+                              borderBottom: `1px solid ${colors.gray[200]}`
+                            }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pendingEmployees.map((employee) => (
+                            <tr key={employee.id}>
+                              <td style={{
                                 padding: '0.75rem',
-                                textAlign: 'left',
                                 fontSize: '0.875rem',
-                                fontWeight: 600,
-                                color: colors.gray[700],
+                                color: colors.gray[800],
                                 borderBottom: `1px solid ${colors.gray[200]}`
-                              }}>Name</th>
-                              <th style={{
+                              }}>{employee.fullName}</td>
+                              <td style={{
                                 padding: '0.75rem',
-                                textAlign: 'left',
                                 fontSize: '0.875rem',
-                                fontWeight: 600,
-                                color: colors.gray[700],
+                                color: colors.gray[800],
                                 borderBottom: `1px solid ${colors.gray[200]}`
-                              }}>Email</th>
-                              <th style={{
+                              }}>{employee.email}</td>
+                              <td style={{
                                 padding: '0.75rem',
-                                textAlign: 'left',
                                 fontSize: '0.875rem',
-                                fontWeight: 600,
-                                color: colors.gray[700],
+                                color: colors.gray[800],
                                 borderBottom: `1px solid ${colors.gray[200]}`
-                              }}>Request Date</th>
-                              <th style={{
+                              }}>{new Date(employee.createdAt).toLocaleDateString()}</td>
+                              <td style={{
                                 padding: '0.75rem',
-                                textAlign: 'right',
                                 fontSize: '0.875rem',
-                                fontWeight: 600,
-                                color: colors.gray[700],
-                                borderBottom: `1px solid ${colors.gray[200]}`
-                              }}>Actions</th>
+                                borderBottom: `1px solid ${colors.gray[200]}`,
+                                textAlign: 'right'
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                  <button
+                                    onClick={() => handleEmployeeApproval(employee.id, true)}
+                                    disabled={isProcessingApproval}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem',
+                                      padding: '0.375rem 0.625rem',
+                                      backgroundColor: colors.green[50],
+                                      color: colors.green[600],
+                                      border: `1px solid ${colors.green[200]}`,
+                                      borderRadius: '0.375rem',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 500,
+                                      cursor: isProcessingApproval ? 'not-allowed' : 'pointer',
+                                      opacity: isProcessingApproval ? 0.7 : 1,
+                                      transition: 'all 0.2s ease'
+                                    }}
+                                  >
+                                    <CheckCircleIcon width={16} height={16} />
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleEmployeeApproval(employee.id, false)}
+                                    disabled={isProcessingApproval}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '0.25rem',
+                                      padding: '0.375rem 0.625rem',
+                                      backgroundColor: colors.red[50],
+                                      color: colors.red[600],
+                                      border: `1px solid ${colors.red[200]}`,
+                                      borderRadius: '0.375rem',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 500,
+                                      cursor: isProcessingApproval ? 'not-allowed' : 'pointer',
+                                      opacity: isProcessingApproval ? 0.7 : 1,
+                                      transition: 'all 0.2s ease'
+                                    }}
+                                  >
+                                    <XCircleIcon width={16} height={16} />
+                                    Reject
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {pendingEmployees.map((employee) => (
-                              <tr key={employee.id}>
-                                <td style={{
-                                  padding: '0.75rem',
-                                  fontSize: '0.875rem',
-                                  color: colors.gray[800],
-                                  borderBottom: `1px solid ${colors.gray[200]}`
-                                }}>{employee.fullName}</td>
-                                <td style={{
-                                  padding: '0.75rem',
-                                  fontSize: '0.875rem',
-                                  color: colors.gray[800],
-                                  borderBottom: `1px solid ${colors.gray[200]}`
-                                }}>{employee.email}</td>
-                                <td style={{
-                                  padding: '0.75rem',
-                                  fontSize: '0.875rem',
-                                  color: colors.gray[800],
-                                  borderBottom: `1px solid ${colors.gray[200]}`
-                                }}>{new Date(employee.createdAt).toLocaleDateString()}</td>
-                                <td style={{
-                                  padding: '0.75rem',
-                                  fontSize: '0.875rem',
-                                  borderBottom: `1px solid ${colors.gray[200]}`,
-                                  textAlign: 'right'
-                                }}>
-                                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                    <button
-                                      onClick={() => handleEmployeeApproval(employee.id, true)}
-                                      disabled={isProcessingApproval}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.25rem',
-                                        padding: '0.375rem 0.625rem',
-                                        backgroundColor: colors.green[50],
-                                        color: colors.green[600],
-                                        border: `1px solid ${colors.green[200]}`,
-                                        borderRadius: '0.375rem',
-                                        fontSize: '0.75rem',
-                                        fontWeight: 500,
-                                        cursor: isProcessingApproval ? 'not-allowed' : 'pointer',
-                                        opacity: isProcessingApproval ? 0.7 : 1,
-                                        transition: 'all 0.2s ease'
-                                      }}
-                                    >
-                                      <CheckCircleIcon width={16} height={16} />
-                                      Approve
-                                    </button>
-                                    <button
-                                      onClick={() => handleEmployeeApproval(employee.id, false)}
-                                      disabled={isProcessingApproval}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.25rem',
-                                        padding: '0.375rem 0.625rem',
-                                        backgroundColor: colors.red[50],
-                                        color: colors.red[600],
-                                        border: `1px solid ${colors.red[200]}`,
-                                        borderRadius: '0.375rem',
-                                        fontSize: '0.75rem',
-                                        fontWeight: 500,
-                                        cursor: isProcessingApproval ? 'not-allowed' : 'pointer',
-                                        opacity: isProcessingApproval ? 0.7 : 1,
-                                        transition: 'all 0.2s ease'
-                                      }}
-                                    >
-                                      <XCircleIcon width={16} height={16} />
-                                      Reject
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '2rem' }}>
-                <p>No organization found for your domain. Please contact the administrator.</p>
-              </div>
-            )}
-            
-          </div>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div style={styles.emptyState}>
+              <p style={styles.emptyStateTitle}>No Organization Found</p>
+              <p style={styles.emptyStateText}>
+                You need to be part of an approved organization to access the dashboard.
+              </p>
+            </div>
+          )}
+          
         </div>
       </div>
       
@@ -3201,13 +2590,14 @@ const EmployerDashboard: React.FC = () => {
       {showCreditHistoryModal && <EmployeeCreditHistoryModal />}
       {showDeleteModal && <DeleteConfirmationModal />}
       {showTransactionModal && <TransactionModal />}
-      {toast && (
+      {toast.visible && (
         <div style={styles.toast}>
           {toast.message}
         </div>
       )}
-    </>
-  );
+    </div>
+  </>
+);
 };
 
 export default EmployerDashboard; 
